@@ -1,0 +1,5 @@
+pyqt6
+pyqt6-webengine
+PyQt6-QScintilla
+markdown
+requests

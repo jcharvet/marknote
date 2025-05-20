@@ -1,0 +1,22 @@
+.venv
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.DS_Store
+.env
+.vscode/
+.idea/
+*.log
+dist/
+build/
+*.egg-info/
+.mypy_cache/
+.pytest_cache/
+.coverage
+*.sqlite3
+
+# User-specific files not to share publicly
+docs/plan.md
+Sportskred/
+config.json
