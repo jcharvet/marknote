@@ -95,8 +95,6 @@ class MainWindow(QMainWindow):
 
     def init_ui(self):
         # Set dark palette
-        # Inform the user of the default folder at startup
-        QMessageBox.information(self, "Default Folder", f"Using folder: {self.default_folder}")
         palette = QPalette()
         palette.setColor(QPalette.ColorRole.Window, QColor("#282c34"))
         palette.setColor(QPalette.ColorRole.WindowText, QColor("#d7dae0"))
@@ -317,36 +315,43 @@ class MainWindow(QMainWindow):
                 default_folder = config.get('DEFAULT_FOLDER')
         except Exception:
             pass
-        # If not set, prompt the user
-        if not default_folder:
-            user_choice = QMessageBox.question(None, "Default Folder", "No default folder is set.\nWould you like to use the system default (~/Documents/Marknote)?",
-                                               QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
-            if user_choice == QMessageBox.StandardButton.Yes:
-                default_folder = str(Path.home() / 'Documents' / 'Marknote')
+        # If default_folder is set and exists, just use it (create if missing)
+        if default_folder and isinstance(default_folder, str):
+            folder_path = Path(default_folder)
+            if not folder_path.exists():
+                try:
+                    folder_path.mkdir(parents=True, exist_ok=True)
+                except Exception as e:
+                    QMessageBox.warning(None, "Config Error", f"Could not create default folder: {e}")
+            return str(folder_path)
+        # Otherwise prompt the user
+        user_choice = QMessageBox.question(None, "Default Folder", "No default folder is set.\nWould you like to use the system default (~/Documents/Marknote)?",
+                                           QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        if user_choice == QMessageBox.StandardButton.Yes:
+            default_folder = str(Path.home() / 'Documents' / 'Marknote')
+        else:
+            folder = QFileDialog.getExistingDirectory(None, "Select a folder for Marknote")
+            if folder:
+                default_folder = folder
             else:
-                folder = QFileDialog.getExistingDirectory(None, "Select a folder for Marknote")
-                if folder:
-                    default_folder = folder
-                else:
-                    # fallback
-                    default_folder = str(Path.home() / 'Documents' / 'Marknote')
-            # Persist the user's choice
-            try:
-                config['DEFAULT_FOLDER'] = default_folder
-                # Preserve other config keys (like GEMINI_API_KEY)
-                if 'GEMINI_API_KEY' not in config:
-                    # Try to preserve existing API key if present
-                    try:
-                        with open(config_path, 'r', encoding='utf-8') as f:
-                            old_config = json.load(f)
-                            if 'GEMINI_API_KEY' in old_config:
-                                config['GEMINI_API_KEY'] = old_config['GEMINI_API_KEY']
-                    except Exception:
-                        pass
-                with open(config_path, 'w', encoding='utf-8') as f:
-                    json.dump(config, f, indent=2)
-            except Exception as e:
-                QMessageBox.warning(None, "Config Error", f"Could not save default folder to config.json:\n{e}")
+                # fallback
+                default_folder = str(Path.home() / 'Documents' / 'Marknote')
+        # Persist the user's choice
+        try:
+            config['DEFAULT_FOLDER'] = default_folder
+            # Preserve other config keys (like GEMINI_API_KEY)
+            if 'GEMINI_API_KEY' not in config:
+                try:
+                    with open(config_path, 'r', encoding='utf-8') as f:
+                        old_config = json.load(f)
+                        if 'GEMINI_API_KEY' in old_config:
+                            config['GEMINI_API_KEY'] = old_config['GEMINI_API_KEY']
+                except Exception:
+                    pass
+            with open(config_path, 'w', encoding='utf-8') as f:
+                json.dump(config, f, indent=2)
+        except Exception as e:
+            QMessageBox.warning(None, "Config Error", f"Could not save default folder to config.json:\n{e}")
         # Create folder if it doesn't exist
         os.makedirs(default_folder, exist_ok=True)
         return default_folder
