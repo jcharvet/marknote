@@ -81,6 +81,7 @@ class MarkdownPreview(QWebEngineView):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
+        self.default_folder = self.get_or_create_default_folder()
         self.setWindowTitle("Marknote - Markdown Editor with AI")
         self.resize(1100, 700)
         self.init_ui()
@@ -92,9 +93,10 @@ class MainWindow(QMainWindow):
         else:
             QTextEdit.keyPressEvent(self.command_bar, event)
 
-
     def init_ui(self):
         # Set dark palette
+        # Inform the user of the default folder at startup
+        QMessageBox.information(self, "Default Folder", f"Using folder: {self.default_folder}")
         palette = QPalette()
         palette.setColor(QPalette.ColorRole.Window, QColor("#282c34"))
         palette.setColor(QPalette.ColorRole.WindowText, QColor("#d7dae0"))
@@ -246,7 +248,6 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to open file: {e}")
 
-
     def save_file(self):
         path, _ = QFileDialog.getSaveFileName(self, "Save Markdown File", "docs", "Markdown Files (*.md);;All Files (*)")
         if path:
@@ -261,7 +262,7 @@ class MainWindow(QMainWindow):
         import os
         from pathlib import Path
         self.library.clear()
-        base_dir = "docs"
+        base_dir = self.default_folder
         def add_items(parent, path):
             try:
                 entries = sorted(Path(path).iterdir(), key=lambda x: (not x.is_dir(), x.name.lower()))
@@ -291,7 +292,7 @@ class MainWindow(QMainWindow):
         import os
         folder_name, ok = QInputDialog.getText(self, "Create Folder", "Folder name:")
         if ok and folder_name.strip():
-            base_dir = "docs"
+            base_dir = self.default_folder
             new_folder_path = os.path.join(base_dir, folder_name.strip())
             try:
                 os.makedirs(new_folder_path, exist_ok=True)
@@ -299,11 +300,56 @@ class MainWindow(QMainWindow):
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Failed to create folder: {e}")
 
-
     def new_file(self):
         self.editor.clear()
         self.preview.set_markdown("")
 
+    def get_or_create_default_folder(self):
+        import os, json
+        from pathlib import Path
+        config_path = os.path.join(os.path.dirname(__file__), 'config.json')
+        default_folder = None
+        config = {}
+        # Try to read from config.json
+        try:
+            with open(config_path, 'r', encoding='utf-8') as f:
+                config = json.load(f)
+                default_folder = config.get('DEFAULT_FOLDER')
+        except Exception:
+            pass
+        # If not set, prompt the user
+        if not default_folder:
+            user_choice = QMessageBox.question(None, "Default Folder", "No default folder is set.\nWould you like to use the system default (~/Documents/Marknote)?",
+                                               QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+            if user_choice == QMessageBox.StandardButton.Yes:
+                default_folder = str(Path.home() / 'Documents' / 'Marknote')
+            else:
+                folder = QFileDialog.getExistingDirectory(None, "Select a folder for Marknote")
+                if folder:
+                    default_folder = folder
+                else:
+                    # fallback
+                    default_folder = str(Path.home() / 'Documents' / 'Marknote')
+            # Persist the user's choice
+            try:
+                config['DEFAULT_FOLDER'] = default_folder
+                # Preserve other config keys (like GEMINI_API_KEY)
+                if 'GEMINI_API_KEY' not in config:
+                    # Try to preserve existing API key if present
+                    try:
+                        with open(config_path, 'r', encoding='utf-8') as f:
+                            old_config = json.load(f)
+                            if 'GEMINI_API_KEY' in old_config:
+                                config['GEMINI_API_KEY'] = old_config['GEMINI_API_KEY']
+                    except Exception:
+                        pass
+                with open(config_path, 'w', encoding='utf-8') as f:
+                    json.dump(config, f, indent=2)
+            except Exception as e:
+                QMessageBox.warning(None, "Config Error", f"Could not save default folder to config.json:\n{e}")
+        # Create folder if it doesn't exist
+        os.makedirs(default_folder, exist_ok=True)
+        return default_folder
 
     def insert_link(self):
         # Insert a Markdown link template at the cursor
