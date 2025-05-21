@@ -84,7 +84,10 @@ class MainWindow(QMainWindow):
         self.default_folder = self.get_or_create_default_folder()
         self.setWindowTitle("Marknote - Markdown Editor with AI")
         self.resize(1100, 700)
+        self.current_file = None
+        self.last_saved_text = ""
         self.init_ui()
+        self.load_last_note()
 
     def command_bar_key_press_event(self, event):
         from PyQt6.QtGui import QKeyEvent
@@ -92,6 +95,15 @@ class MainWindow(QMainWindow):
             self.execute_command()
         else:
             QTextEdit.keyPressEvent(self.command_bar, event)
+
+    def closeEvent(self, event):
+        # Prompt to save on close
+        if not self.maybe_save_changes():
+            event.ignore()
+        else:
+            if self.current_file and self.current_file.endswith('.md'):
+                self.save_last_note(self.current_file)
+            event.accept()
 
     def init_ui(self):
         # Set dark palette
@@ -118,7 +130,15 @@ class MainWindow(QMainWindow):
 
         save_action = QAction(QIcon(), "Save", self)
         save_action.triggered.connect(self.save_file)
+        save_action.setShortcut(QKeySequence("Ctrl+S"))
+        self.addAction(save_action)
         toolbar.addAction(save_action)
+
+        save_as_action = QAction(QIcon(), "Save As", self)
+        save_as_action.triggered.connect(self.save_file_as)
+        save_as_action.setShortcut(QKeySequence("Ctrl+Shift+S"))
+        self.addAction(save_as_action)
+        toolbar.addAction(save_as_action)
 
         new_action = QAction(QIcon(), "New", self)
         new_action.triggered.connect(self.new_file)
@@ -158,6 +178,8 @@ class MainWindow(QMainWindow):
         self.library.setStyleSheet("background: #23252b; color: #61AFEF; font-size: 13px;")
         self.library.setMaximumWidth(210)
         self.library.itemClicked.connect(self.open_tree_item)
+        self.library.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.library.customContextMenuRequested.connect(self.show_library_context_menu)
         library_layout.addWidget(self.library)
         self.refresh_library()
 
@@ -222,6 +244,8 @@ class MainWindow(QMainWindow):
         self.preview.set_markdown(text)
 
     def open_file(self):
+        if not self.maybe_save_changes():
+            return
         path, _ = QFileDialog.getOpenFileName(self, "Open Markdown File", "docs", "Markdown Files (*.md);;All Files (*)")
         if path:
             self.load_markdown_file(path)
@@ -235,23 +259,53 @@ class MainWindow(QMainWindow):
                 self.library.collapseItem(item)
             else:
                 self.library.expandItem(item)
+            # Always clear and set editor to read-only with a message
+            if not self.maybe_save_changes():
+                return
+            self.editor.setReadOnly(True)
+            self.editor.setPlainText("Select a file to edit or create a new file in this folder.")
+            self.preview.set_markdown("")
+            self.current_file = None
+            self.last_saved_text = ""
         elif path.endswith(".md"):
+            if not self.maybe_save_changes():
+                return
             self.load_markdown_file(path)
+            self.editor.setReadOnly(False)
 
     def load_markdown_file(self, path):
         try:
             with open(path, "r", encoding="utf-8") as f:
-                self.editor.setPlainText(f.read())
+                content = f.read()
+                self.editor.setPlainText(content)
+                self.last_saved_text = content
+                self.current_file = path
+                self.save_last_note(path)
             self.preview.set_markdown(self.editor.toPlainText())
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to open file: {e}")
 
     def save_file(self):
-        path, _ = QFileDialog.getSaveFileName(self, "Save Markdown File", "docs", "Markdown Files (*.md);;All Files (*)")
+        text = self.editor.toPlainText()
+        if self.current_file:
+            try:
+                with open(self.current_file, "w", encoding="utf-8") as f:
+                    f.write(text)
+                self.last_saved_text = text
+                self.refresh_library(self.search_bar.text())
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Failed to save file: {e}")
+        else:
+            self.save_file_as()
+
+    def save_file_as(self):
+        path, _ = QFileDialog.getSaveFileName(self, "Save Markdown File As", "docs", "Markdown Files (*.md);;All Files (*)")
         if path:
             try:
                 with open(path, "w", encoding="utf-8") as f:
                     f.write(self.editor.toPlainText())
+                self.current_file = path
+                self.last_saved_text = self.editor.toPlainText()
                 self.refresh_library(self.search_bar.text())
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Failed to save file: {e}")
@@ -288,19 +342,31 @@ class MainWindow(QMainWindow):
 
     def create_folder(self):
         import os
+        if not self.maybe_save_changes():
+            return
         folder_name, ok = QInputDialog.getText(self, "Create Folder", "Folder name:")
         if ok and folder_name.strip():
             base_dir = self.default_folder
             new_folder_path = os.path.join(base_dir, folder_name.strip())
             try:
                 os.makedirs(new_folder_path, exist_ok=True)
+                # Create a default.md file in the new folder
+                default_file_path = os.path.join(new_folder_path, "default.md")
+                with open(default_file_path, 'w', encoding='utf-8') as f:
+                    f.write("")
                 self.refresh_library(self.search_bar.text())
+                self.load_markdown_file(default_file_path)
+                self.editor.setReadOnly(False)
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Failed to create folder: {e}")
 
     def new_file(self):
+        if not self.maybe_save_changes():
+            return
         self.editor.clear()
         self.preview.set_markdown("")
+        self.current_file = None
+        self.last_saved_text = ""
 
     def get_or_create_default_folder(self):
         import os, json
@@ -323,6 +389,21 @@ class MainWindow(QMainWindow):
                     folder_path.mkdir(parents=True, exist_ok=True)
                 except Exception as e:
                     QMessageBox.warning(None, "Config Error", f"Could not create default folder: {e}")
+            # Persist config to ensure consistency
+            try:
+                config['DEFAULT_FOLDER'] = str(folder_path)
+                # Preserve other config keys
+                if os.path.exists(config_path):
+                    with open(config_path, 'r', encoding='utf-8') as f:
+                        old_config = json.load(f)
+                        if 'GEMINI_API_KEY' in old_config:
+                            config['GEMINI_API_KEY'] = old_config['GEMINI_API_KEY']
+                        if 'LAST_NOTE' in old_config:
+                            config['LAST_NOTE'] = old_config['LAST_NOTE']
+                with open(config_path, 'w', encoding='utf-8') as f:
+                    json.dump(config, f, indent=2)
+            except Exception as e:
+                QMessageBox.warning(None, "Config Error", f"Could not save default folder to config.json:\n{e}")
             return str(folder_path)
         # Otherwise prompt the user
         user_choice = QMessageBox.question(None, "Default Folder", "No default folder is set.\nWould you like to use the system default (~/Documents/Marknote)?",
@@ -339,15 +420,14 @@ class MainWindow(QMainWindow):
         # Persist the user's choice
         try:
             config['DEFAULT_FOLDER'] = default_folder
-            # Preserve other config keys (like GEMINI_API_KEY)
-            if 'GEMINI_API_KEY' not in config:
-                try:
-                    with open(config_path, 'r', encoding='utf-8') as f:
-                        old_config = json.load(f)
-                        if 'GEMINI_API_KEY' in old_config:
-                            config['GEMINI_API_KEY'] = old_config['GEMINI_API_KEY']
-                except Exception:
-                    pass
+            # Preserve other config keys (like GEMINI_API_KEY, LAST_NOTE)
+            if os.path.exists(config_path):
+                with open(config_path, 'r', encoding='utf-8') as f:
+                    old_config = json.load(f)
+                    if 'GEMINI_API_KEY' in old_config:
+                        config['GEMINI_API_KEY'] = old_config['GEMINI_API_KEY']
+                    if 'LAST_NOTE' in old_config:
+                        config['LAST_NOTE'] = old_config['LAST_NOTE']
             with open(config_path, 'w', encoding='utf-8') as f:
                 json.dump(config, f, indent=2)
         except Exception as e:
@@ -356,6 +436,33 @@ class MainWindow(QMainWindow):
         os.makedirs(default_folder, exist_ok=True)
         return default_folder
 
+    def save_last_note(self, path):
+        import os, json
+        config_path = os.path.join(os.path.dirname(__file__), 'config.json')
+        try:
+            config = {}
+            if os.path.exists(config_path):
+                with open(config_path, 'r', encoding='utf-8') as f:
+                    config = json.load(f)
+            config['LAST_NOTE'] = path
+            with open(config_path, 'w', encoding='utf-8') as f:
+                json.dump(config, f, indent=2)
+        except Exception:
+            pass
+
+    def load_last_note(self):
+        import os, json
+        config_path = os.path.join(os.path.dirname(__file__), 'config.json')
+        try:
+            if os.path.exists(config_path):
+                with open(config_path, 'r', encoding='utf-8') as f:
+                    config = json.load(f)
+                    last_note = config.get('LAST_NOTE')
+                    if last_note and os.path.exists(last_note) and last_note.endswith('.md'):
+                        self.load_markdown_file(last_note)
+        except Exception:
+            pass
+
     def insert_link(self):
         # Insert a Markdown link template at the cursor
         cursor = self.editor.SendScintilla
@@ -363,6 +470,28 @@ class MainWindow(QMainWindow):
         template = "[Link Text](https://example.com)"
         self.editor.insert(template)
         # Optionally, move cursor between brackets
+
+    def maybe_save_changes(self):
+        """
+        Returns True to continue, False to abort navigation or close.
+        """
+        if self.editor.isReadOnly():
+            return True
+        text = self.editor.toPlainText()
+        if text != self.last_saved_text:
+            reply = QMessageBox.question(
+                self, "Unsaved Changes",
+                "You have unsaved changes. Do you want to save them?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No | QMessageBox.StandardButton.Cancel
+            )
+            if reply == QMessageBox.StandardButton.Yes:
+                self.save_file()
+                # If still unsaved (user canceled in save dialog), abort
+                if self.editor.toPlainText() != self.last_saved_text:
+                    return False
+            elif reply == QMessageBox.StandardButton.Cancel:
+                return False
+        return True
 
     def show_context_menu(self, position):
         menu = QMenu(self)
@@ -377,6 +506,89 @@ class MainWindow(QMainWindow):
         command_action.triggered.connect(self.show_command_bar)
         nlp_command_action.triggered.connect(self.show_command_bar)
         menu.exec(self.editor.mapToGlobal(position))
+
+    def show_library_context_menu(self, position):
+        item = self.library.itemAt(position)
+        if not item:
+            return
+        import os
+        path = item.data(0, 1)
+        menu = QMenu(self)
+        if os.path.isdir(path):
+            new_file_action = menu.addAction("New File")
+            rename_action = menu.addAction("Rename Folder")
+            # Always allow delete action, but warn if not empty
+            import os
+            is_empty = not any(os.scandir(path))
+            delete_action = menu.addAction("Delete Folder")
+            new_file_action.triggered.connect(lambda: self.create_file_in_folder(path))
+            delete_action.triggered.connect(lambda: self.delete_file_or_folder(item, path, is_folder=True))
+            rename_action.triggered.connect(lambda: self.rename_file_or_folder(item, path, is_folder=True))
+        else:
+            rename_action = menu.addAction("Rename File")
+            delete_action = menu.addAction("Delete File")
+            rename_action.triggered.connect(lambda: self.rename_file_or_folder(item, path, is_folder=False))
+            delete_action.triggered.connect(lambda: self.delete_file_or_folder(item, path, is_folder=False))
+        menu.exec(self.library.viewport().mapToGlobal(position))
+
+    def rename_file_or_folder(self, item, path, is_folder):
+        import os
+        base_dir = os.path.dirname(path) if not is_folder else os.path.dirname(path.rstrip(os.sep))
+        old_name = os.path.basename(path.rstrip(os.sep)) if is_folder else os.path.basename(path)
+        new_name, ok = QInputDialog.getText(self, "Rename", f"Enter new name for {'folder' if is_folder else 'file'}:", text=old_name)
+        if ok and new_name.strip():
+            new_path = os.path.join(base_dir, new_name.strip())
+            try:
+                os.rename(path, new_path)
+                self.refresh_library(self.search_bar.text())
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Failed to rename: {e}")
+
+    def create_file_in_folder(self, folder_path):
+        import os
+        if not self.maybe_save_changes():
+            return
+        file_name, ok = QInputDialog.getText(self, "New File", "Enter new file name (with .md extension):")
+        if ok and file_name.strip():
+            if not file_name.strip().endswith('.md'):
+                file_name = file_name.strip() + '.md'
+            new_file_path = os.path.join(folder_path, file_name)
+            if os.path.exists(new_file_path):
+                QMessageBox.warning(self, "File Exists", f"A file named '{file_name}' already exists in this folder.")
+                return
+            try:
+                with open(new_file_path, 'w', encoding='utf-8') as f:
+                    f.write("")
+                self.refresh_library(self.search_bar.text())
+                self.load_markdown_file(new_file_path)
+                self.editor.setReadOnly(False)
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Failed to create file: {e}")
+
+    def delete_file_or_folder(self, item, path, is_folder):
+        import os
+        if is_folder:
+            # Always show warning if folder is not empty
+            if any(os.scandir(path)):
+                QMessageBox.warning(
+                    self,
+                    "Cannot Delete Folder",
+                    f"This folder cannot be deleted because it is not empty.\n\nTo delete a folder, first remove all files and subfolders inside it.\n(This is the same as Unix behavior: rmdir only works on empty folders.)"
+                )
+                return
+            msg = f"Are you sure you want to delete this folder?\n{path}"
+        else:
+            msg = f"Are you sure you want to delete this file?\n{path}"
+        reply = QMessageBox.question(self, "Delete", msg, QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        if reply == QMessageBox.StandardButton.Yes:
+            try:
+                if is_folder:
+                    os.rmdir(path)
+                else:
+                    os.remove(path)
+                self.refresh_library(self.search_bar.text())
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Failed to delete: {e}")
 
     def expand_selected_text(self):
         selected = self.editor.selectedText()
