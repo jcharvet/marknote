@@ -115,8 +115,64 @@ class MainWindow(QMainWindow):
         palette.setColor(QPalette.ColorRole.WindowText, QColor("#d7dae0"))
         self.setPalette(palette)
 
-        # Menu bar with Help
+        # Menu bar with File and Help
         menubar = self.menuBar()
+        # Apply dark style to menubar and menus
+        menubar.setStyleSheet("""
+            QMenuBar {
+                background: #23252b;
+                color: #61AFEF;
+                font-size: 14px;
+            }
+            QMenuBar::item {
+                background: transparent;
+                color: #61AFEF;
+                padding: 4px 12px;
+            }
+            QMenuBar::item:selected {
+                background: #2c313a;
+                color: #98c379;
+            }
+            QMenu {
+                background: #23252b;
+                color: #d7dae0;
+                border: 1px solid #282c34;
+            }
+            QMenu::item {
+                background: transparent;
+                color: #d7dae0;
+                padding: 6px 24px 6px 24px;
+            }
+            QMenu::item:selected {
+                background: #2c313a;
+                color: #98c379;
+            }
+            QMenu::separator {
+                height: 1px;
+                background: #282c34;
+                margin: 4px 0px 4px 0px;
+            }
+        """)
+        file_menu = menubar.addMenu("File")
+        open_file_action = QAction("Open File", self)
+        open_file_action.triggered.connect(self.open_file)
+        file_menu.addAction(open_file_action)
+        open_folder_action = QAction("Open Folder", self)
+        open_folder_action.triggered.connect(self.open_folder)
+        file_menu.addAction(open_folder_action)
+        file_menu.addSeparator()
+        save_action = QAction("Save", self)
+        save_action.triggered.connect(self.save_file)
+        save_action.setShortcut(QKeySequence("Ctrl+S"))
+        file_menu.addAction(save_action)
+        save_as_action = QAction("Save As", self)
+        save_as_action.triggered.connect(self.save_file_as)
+        save_as_action.setShortcut(QKeySequence("Ctrl+Shift+S"))
+        file_menu.addAction(save_as_action)
+        file_menu.addSeparator()
+        new_action = QAction("New", self)
+        new_action.triggered.connect(self.new_file)
+        file_menu.addAction(new_action)
         help_menu = menubar.addMenu("Help")
         syntax_action = QAction("Markdown & Mermaid Syntax", self)
         syntax_action.triggered.connect(self.show_syntax_help)
@@ -126,26 +182,6 @@ class MainWindow(QMainWindow):
         toolbar = QToolBar("Main Toolbar")
         toolbar.setStyleSheet("background: #21252b; color: #61AFEF;")
         self.addToolBar(toolbar)
-
-        open_action = QAction(QIcon(), "Open", self)
-        open_action.triggered.connect(self.open_file)
-        toolbar.addAction(open_action)
-
-        save_action = QAction(QIcon(), "Save", self)
-        save_action.triggered.connect(self.save_file)
-        save_action.setShortcut(QKeySequence("Ctrl+S"))
-        self.addAction(save_action)
-        toolbar.addAction(save_action)
-
-        save_as_action = QAction(QIcon(), "Save As", self)
-        save_as_action.triggered.connect(self.save_file_as)
-        save_as_action.setShortcut(QKeySequence("Ctrl+Shift+S"))
-        self.addAction(save_as_action)
-        toolbar.addAction(save_as_action)
-
-        new_action = QAction(QIcon(), "New", self)
-        new_action.triggered.connect(self.new_file)
-        toolbar.addAction(new_action)
 
         link_action = QAction(QIcon(), "Link", self)
         link_action.triggered.connect(self.insert_link)
@@ -252,6 +288,13 @@ class MainWindow(QMainWindow):
         path, _ = QFileDialog.getOpenFileName(self, "Open Markdown File", "docs", "Markdown Files (*.md);;All Files (*)")
         if path:
             self.load_markdown_file(path)
+
+    def open_folder(self):
+        folder = QFileDialog.getExistingDirectory(self, "Open Folder", str(self.default_folder))
+        if folder:
+            self.default_folder = folder
+            self.refresh_library()
+
 
     def open_tree_item(self, item, column):
         import os
