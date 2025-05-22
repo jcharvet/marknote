@@ -1,4 +1,7 @@
 import sys
+import os
+import json
+from pathlib import Path
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
     QFileDialog, QToolBar, QMessageBox, QMenu, QLineEdit, QTextEdit, QSplitter, QTreeWidget, QTreeWidgetItem, QPushButton, QInputDialog
@@ -368,19 +371,30 @@ class MainWindow(QMainWindow):
         self.current_file = None
         self.last_saved_text = ""
 
+    def _normalize_path(self, path):
+        import sys
+        # On Linux, ignore Windows drive-letter paths or backslashes
+        if sys.platform != "win32":
+            if path and ("\\" in path or (len(path) > 2 and path[1] == ':' and path[2] in ['\\', '/'])):
+                # Path is Windows-style, ignore/reset
+                return str(Path.home() / 'Documents' / 'Marknote')
+        # Normalize path for current OS
+        return os.path.abspath(os.path.normpath(path)) if path else str(Path.home() / 'Documents' / 'Marknote')
+
     def get_or_create_default_folder(self):
-        import os, json
-        from pathlib import Path
         config_path = os.path.join(os.path.dirname(__file__), 'config.json')
-        default_folder = None
         config = {}
-        # Try to read from config.json
+        default_folder = None
+        # Single config read
         try:
-            with open(config_path, 'r', encoding='utf-8') as f:
-                config = json.load(f)
-                default_folder = config.get('DEFAULT_FOLDER')
-        except Exception:
-            pass
+            if os.path.exists(config_path):
+                with open(config_path, 'r', encoding='utf-8') as f:
+                    config = json.load(f)
+                    default_folder = config.get('DEFAULT_FOLDER')
+        except Exception as e:
+            QMessageBox.warning(None, "Config Error", f"Could not read config.json:\n{e}")
+        # Normalize and validate path
+        default_folder = self._normalize_path(default_folder)
         # If default_folder is set and exists, just use it (create if missing)
         if default_folder and isinstance(default_folder, str):
             folder_path = Path(default_folder)
@@ -389,17 +403,9 @@ class MainWindow(QMainWindow):
                     folder_path.mkdir(parents=True, exist_ok=True)
                 except Exception as e:
                     QMessageBox.warning(None, "Config Error", f"Could not create default folder: {e}")
-            # Persist config to ensure consistency
+            # Save config (single write)
             try:
                 config['DEFAULT_FOLDER'] = str(folder_path)
-                # Preserve other config keys
-                if os.path.exists(config_path):
-                    with open(config_path, 'r', encoding='utf-8') as f:
-                        old_config = json.load(f)
-                        if 'GEMINI_API_KEY' in old_config:
-                            config['GEMINI_API_KEY'] = old_config['GEMINI_API_KEY']
-                        if 'LAST_NOTE' in old_config:
-                            config['LAST_NOTE'] = old_config['LAST_NOTE']
                 with open(config_path, 'w', encoding='utf-8') as f:
                     json.dump(config, f, indent=2)
             except Exception as e:
@@ -417,17 +423,11 @@ class MainWindow(QMainWindow):
             else:
                 # fallback
                 default_folder = str(Path.home() / 'Documents' / 'Marknote')
-        # Persist the user's choice
+        # Normalize again
+        default_folder = self._normalize_path(default_folder)
+        # Save config (single write)
         try:
             config['DEFAULT_FOLDER'] = default_folder
-            # Preserve other config keys (like GEMINI_API_KEY, LAST_NOTE)
-            if os.path.exists(config_path):
-                with open(config_path, 'r', encoding='utf-8') as f:
-                    old_config = json.load(f)
-                    if 'GEMINI_API_KEY' in old_config:
-                        config['GEMINI_API_KEY'] = old_config['GEMINI_API_KEY']
-                    if 'LAST_NOTE' in old_config:
-                        config['LAST_NOTE'] = old_config['LAST_NOTE']
             with open(config_path, 'w', encoding='utf-8') as f:
                 json.dump(config, f, indent=2)
         except Exception as e:
@@ -437,31 +437,32 @@ class MainWindow(QMainWindow):
         return default_folder
 
     def save_last_note(self, path):
-        import os, json
         config_path = os.path.join(os.path.dirname(__file__), 'config.json')
         try:
             config = {}
             if os.path.exists(config_path):
                 with open(config_path, 'r', encoding='utf-8') as f:
                     config = json.load(f)
+            # Normalize path before saving
+            path = self._normalize_path(path)
             config['LAST_NOTE'] = path
             with open(config_path, 'w', encoding='utf-8') as f:
                 json.dump(config, f, indent=2)
-        except Exception:
-            pass
+        except Exception as e:
+            QMessageBox.warning(self, "Config Error", f"Could not save last note to config.json:\n{e}")
 
     def load_last_note(self):
-        import os, json
         config_path = os.path.join(os.path.dirname(__file__), 'config.json')
         try:
             if os.path.exists(config_path):
                 with open(config_path, 'r', encoding='utf-8') as f:
                     config = json.load(f)
                     last_note = config.get('LAST_NOTE')
+                    last_note = self._normalize_path(last_note)
                     if last_note and os.path.exists(last_note) and last_note.endswith('.md'):
                         self.load_markdown_file(last_note)
-        except Exception:
-            pass
+        except Exception as e:
+            QMessageBox.warning(self, "Config Error", f"Could not load last note from config.json:\n{e}")
 
     def insert_link(self):
         # Insert a Markdown link template at the cursor
@@ -566,7 +567,6 @@ class MainWindow(QMainWindow):
                 QMessageBox.critical(self, "Error", f"Failed to create file: {e}")
 
     def delete_file_or_folder(self, item, path, is_folder):
-        import os
         if is_folder:
             # Always show warning if folder is not empty
             if any(os.scandir(path)):
@@ -586,6 +586,18 @@ class MainWindow(QMainWindow):
                     os.rmdir(path)
                 else:
                     os.remove(path)
+                # UX improvement: If the current file is deleted, clear editor/preview
+                if not is_folder and self.current_file == path:
+                    self.editor.clear()
+                    self.preview.set_markdown("")
+                    self.current_file = None
+                    self.last_saved_text = ""
+                elif is_folder and self.current_file and self.current_file.startswith(path + os.sep):
+                    # If current file is inside the deleted folder
+                    self.editor.clear()
+                    self.preview.set_markdown("")
+                    self.current_file = None
+                    self.last_saved_text = ""
                 self.refresh_library(self.search_bar.text())
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Failed to delete: {e}")
