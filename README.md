@@ -1,6 +1,8 @@
 # Marknote
 
-A Python-based Markdown editor with AI integration (Google Gemini), built for Windows 11 using PyQt6.
+A Python-based Markdown editor with AI integration (Google Gemini), built with PyQt6.
+
+**Now supports Windows 11 and Linux (tested on Linux Mint/Ubuntu)!**
 
 ## Features
 - Sidebar document library with folder tree, search, and instant file switching
@@ -17,13 +19,19 @@ A Python-based Markdown editor with AI integration (Google Gemini), built for Wi
 - More file operations for better note management
 
 ## Getting Started
-1. **Install Python 3.9+** and ensure you are on Windows 11.
+1. **Install Python 3.9+** on your system.
 2. **Clone or download this repository.**
 3. **Run the app:**
-   - Double-click `start.bat` (recommended) or run it from a terminal. This will:
+   - **On Windows:** Double-click `start.bat` (recommended) or run it from a terminal. This will:
      - Activate the virtual environment (if present)
      - Install/update dependencies automatically
      - Launch Marknote
+   - **On Linux:** Run the `start.sh` script from a terminal:
+     ```bash
+     ./start.sh
+     ```
+     The script will check for required Qt system libraries and suggest installable packages if needed.
+
 
 ## How to Use Marknote for Note Taking
 ### Basic Editing
@@ -54,11 +62,28 @@ A Python-based Markdown editor with AI integration (Google Gemini), built for Wi
 - All AI interactions are context-aware and designed for intuitive note-taking.
 
 ## Requirements
-- Windows 11
+- Windows 11 or Linux (Mint/Ubuntu recommended)
 - Python 3.9+
 
 ## AI Integration
 - Uses the Gemini API for AI-powered features. No Genkit installation required—just an API key!
+
+---
+
+## Linux Notes
+- Marknote now supports Linux! 
+- On first run, the app will check for required Qt system libraries and suggest installable packages if needed.
+- To start the app on Linux, use the provided `start.sh` script:
+  ```bash
+  ./start.sh
+  ```
+- If you encounter missing library errors, follow the on-screen instructions to install dependencies.
+
+---
+
+## Cross-Platform Support
+- Marknote was originally designed for Windows but now has improved support for Linux.
+- Path handling and configuration are normalized for your OS. If you find any issues or have suggestions for better cross-platform compatibility, please open an issue or pull request!
 
 ### How to Get Your Gemini API Key
 1. Go to the [Google AI Studio](https://aistudio.google.com/app/apikey)
@@ -80,6 +105,31 @@ A Python-based Markdown editor with AI integration (Google Gemini), built for Wi
 
 ## Support
 If you have questions or want to suggest improvements, open an issue or contribute!
+
+## Troubleshooting (Linux: PyQt/Qt Errors)
+If you encounter errors like:
+
+```
+qt.qpa.plugin: Could not load the Qt platform plugin "xcb" in "" even though it was found.
+This application failed to start because no Qt platform plugin could be initialized.
+```
+
+This means some required system libraries for PyQt/Qt are missing on your system. To resolve this, install the following packages:
+
+```
+sudo apt-get update
+sudo apt-get install libxcb-cursor0 libxcb-xinerama0 libxcb-xinput0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-render-util0 libgl1 libegl1 mesa-utils libxkbcommon-x11-0
+```
+
+If you see errors about missing 'venv' or 'ensurepip', also run:
+
+```
+sudo apt-get install python3-venv
+```
+
+After installing, re-run `./start.sh`.
+
+If you are on a different Linux distribution, use your package manager to install the equivalent libraries.
 
 ## License
 This project is licensed under the MIT License. See the LICENSE file for details.
