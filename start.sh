@@ -1,6 +1,6 @@
+#!/bin/bash
 sudo apt-get update
-sudo apt-get install libxcb-cursor0 libgl1 libegl1sudo apt-get update
-sudo apt-get install libxcb-cursor0 libgl1 libegl1#!/bin/bash
+sudo apt-get install libxcb-cursor0 libgl1 libegl1
 set -e
 
 # Step 1: Detect platform and required venv activate script
