@@ -415,7 +415,6 @@ class MainWindow(QMainWindow):
         self.last_saved_text = ""
 
     def _normalize_path(self, path):
-        import sys
         # On Linux, ignore Windows drive-letter paths or backslashes
         if sys.platform != "win32":
             if path and ("\\" in path or (len(path) > 2 and path[1] == ':' and path[2] in ['\\', '/'])):
