@@ -293,6 +293,18 @@ class MainWindow(QMainWindow):
         folder = QFileDialog.getExistingDirectory(self, "Open Folder", str(self.default_folder))
         if folder:
             self.default_folder = folder
+            # Persist the new default folder to config.json
+            config_path = os.path.join(os.path.dirname(__file__), 'config.json')
+            try:
+                config = {}
+                if os.path.exists(config_path):
+                    with open(config_path, 'r', encoding='utf-8') as f:
+                        config = json.load(f)
+                config['DEFAULT_FOLDER'] = folder
+                with open(config_path, 'w', encoding='utf-8') as f:
+                    json.dump(config, f, indent=2)
+            except Exception as e:
+                QMessageBox.warning(self, "Config Error", f"Could not save default folder to config.json:\n{e}")
             self.refresh_library()
 
 
