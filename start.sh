@@ -48,7 +48,7 @@ else
     exit 1
 fi
 
-# Step 3: Install dependencies if needed
+# Step 4: Install dependencies if needed
 if [ -f requirements.txt ]; then
     if [ ! -f .venv/.deps_installed ]; then
         echo "No previous dependency install detected. Installing all dependencies..."
@@ -71,7 +71,7 @@ else
     echo "No requirements.txt found."
 fi
 
-# Step 4: Check for required Qt system libraries on Linux
+# Step 5: Check for required Qt system libraries on Linux
 if [[ "$OS_TYPE" == "Linux" ]]; then
     # Define package alternatives for modern and legacy distros
     QT_LIBS=(
@@ -113,5 +113,5 @@ if [[ "$OS_TYPE" == "Linux" ]]; then
     fi
 fi
 
-# Step 5: Run the app
+# Step 6: Run the app
 python3 main.py
