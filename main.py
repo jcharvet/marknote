@@ -91,6 +91,7 @@ class MainWindow(QMainWindow):
         self.last_saved_text = ""
         self.init_ui()
         self.load_last_note()
+        self.load_recent_files()
 
     def command_bar_key_press_event(self, event):
         from PyQt6.QtGui import QKeyEvent
@@ -106,6 +107,7 @@ class MainWindow(QMainWindow):
         else:
             if self.current_file and self.current_file.endswith('.md'):
                 self.save_last_note(self.current_file)
+                self.add_to_recent_files(self.current_file)
             event.accept()
 
     def init_ui(self):
@@ -117,7 +119,6 @@ class MainWindow(QMainWindow):
 
         # Menu bar with File and Help
         menubar = self.menuBar()
-        # Apply dark style to menubar and menus
         menubar.setStyleSheet("""
             QMenuBar {
                 background: #23252b;
@@ -153,45 +154,72 @@ class MainWindow(QMainWindow):
                 margin: 4px 0px 4px 0px;
             }
         """)
+        # File Menu
         file_menu = menubar.addMenu("File")
+
+        new_action = QAction("New", self)
+        new_action.triggered.connect(self.new_file)
+        file_menu.addAction(new_action)
+
         open_file_action = QAction("Open File", self)
         open_file_action.triggered.connect(self.open_file)
         file_menu.addAction(open_file_action)
+
         open_folder_action = QAction("Open Folder", self)
         open_folder_action.triggered.connect(self.open_folder)
         file_menu.addAction(open_folder_action)
+
+        # Open Recent submenu (placeholder for now)
+        self.recent_files_menu = QMenu("Open Recent", self)
+        file_menu.addMenu(self.recent_files_menu)
+        self.update_recent_files_menu() # Call to populate it (will be empty initially)
+
         file_menu.addSeparator()
+
         save_action = QAction("Save", self)
         save_action.triggered.connect(self.save_file)
         save_action.setShortcut(QKeySequence("Ctrl+S"))
         file_menu.addAction(save_action)
+
         save_as_action = QAction("Save As", self)
         save_as_action.triggered.connect(self.save_file_as)
         save_as_action.setShortcut(QKeySequence("Ctrl+Shift+S"))
         file_menu.addAction(save_as_action)
+
         file_menu.addSeparator()
-        new_action = QAction("New", self)
-        new_action.triggered.connect(self.new_file)
-        file_menu.addAction(new_action)
+
+        export_as_action = QAction("Export As...", self)
+        export_as_action.triggered.connect(self.export_file_as)
+        file_menu.addAction(export_as_action)
+
+        print_action = QAction("Print...", self)
+        print_action.triggered.connect(self.print_file)
+        # You might want to add a shortcut like Ctrl+P here later
+        file_menu.addAction(print_action)
+
+        file_menu.addSeparator()
+
+        exit_action = QAction("Exit", self)
+        exit_action.triggered.connect(self.close_application) # Or self.close directly
+        file_menu.addAction(exit_action)
+
+        # Other Menu
+        other_menu = menubar.addMenu("Other")
+
+        link_action = QAction("Link", self)
+        link_action.triggered.connect(self.insert_link)
+        other_menu.addAction(link_action)
+
+        ai_command_action = QAction("AI Command", self)
+        ai_command_action.setShortcut(QKeySequence("Ctrl+Shift+Space"))
+        ai_command_action.triggered.connect(self.show_command_bar)
+        other_menu.addAction(ai_command_action)
+
+        # Help Menu
         help_menu = menubar.addMenu("Help")
-        syntax_action = QAction("Markdown & Mermaid Syntax", self)
+        syntax_action = QAction("Markdown & Mermaid Syntax", self) # This maps to "Help feature"
         syntax_action.triggered.connect(self.show_syntax_help)
         help_menu.addAction(syntax_action)
-
-        # Toolbar
-        toolbar = QToolBar("Main Toolbar")
-        toolbar.setStyleSheet("background: #21252b; color: #61AFEF;")
-        self.addToolBar(toolbar)
-
-        link_action = QAction(QIcon(), "Link", self)
-        link_action.triggered.connect(self.insert_link)
-        toolbar.addAction(link_action)
-
-        # AI Command Bar button
-        ai_command_action = QAction(QIcon(), "AI Command", self)
-        ai_command_action.setToolTip("Open AI Command Bar (Ctrl+Shift+Space)")
-        ai_command_action.triggered.connect(self.show_command_bar)
-        toolbar.addAction(ai_command_action)
 
         # Document library area
         library_panel = QWidget()
@@ -282,12 +310,23 @@ class MainWindow(QMainWindow):
         text = self.editor.toPlainText()
         self.preview.set_markdown(text)
 
-    def open_file(self):
+    def open_file(self, file_path=None):
         if not self.maybe_save_changes():
             return
-        path, _ = QFileDialog.getOpenFileName(self, "Open Markdown File", "docs", "Markdown Files (*.md);;All Files (*)")
-        if path:
-            self.load_markdown_file(path)
+        if not file_path:
+            file_path, _ = QFileDialog.getOpenFileName(self, "Open Markdown File", "docs", "Markdown Files (*.md);;All Files (*)")
+        if file_path:
+            try:
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                self.editor.setPlainText(content)
+                self.current_file = file_path
+                self.last_saved_text = content
+                self.setWindowTitle(f"Marknote - {os.path.basename(file_path)}")
+                self.preview.set_markdown(content)
+                self.add_to_recent_files(file_path)
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Could not open file: {e}")
 
     def open_folder(self):
         folder = QFileDialog.getExistingDirectory(self, "Open Folder", str(self.default_folder))
@@ -306,7 +345,6 @@ class MainWindow(QMainWindow):
             except Exception as e:
                 QMessageBox.warning(self, "Config Error", f"Could not save default folder to config.json:\n{e}")
             self.refresh_library()
-
 
     def open_tree_item(self, item, column):
         import os
@@ -350,23 +388,21 @@ class MainWindow(QMainWindow):
                 with open(self.current_file, "w", encoding="utf-8") as f:
                     f.write(text)
                 self.last_saved_text = text
-                self.refresh_library(self.search_bar.text())
+                self.setWindowTitle(f"Marknote - {os.path.basename(self.current_file)}")
+                self.add_to_recent_files(self.current_file)
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Failed to save file: {e}")
         else:
             self.save_file_as()
 
     def save_file_as(self):
-        path, _ = QFileDialog.getSaveFileName(self, "Save Markdown File As", "docs", "Markdown Files (*.md);;All Files (*)")
-        if path:
-            try:
-                with open(path, "w", encoding="utf-8") as f:
-                    f.write(self.editor.toPlainText())
-                self.current_file = path
-                self.last_saved_text = self.editor.toPlainText()
-                self.refresh_library(self.search_bar.text())
-            except Exception as e:
-                QMessageBox.critical(self, "Error", f"Failed to save file: {e}")
+        file_path, _ = QFileDialog.getSaveFileName(self, "Save Markdown File As", "docs", "Markdown Files (*.md);;All Files (*)")
+        if file_path:
+            if not file_path.endswith('.md'):
+                file_path += '.md'
+            self.current_file = file_path
+            self.save_file()
+            # self.add_to_recent_files(file_path) # save_file already does this
 
     def refresh_library(self, filter_text=""):
         import os
@@ -419,112 +455,13 @@ class MainWindow(QMainWindow):
                 QMessageBox.critical(self, "Error", f"Failed to create folder: {e}")
 
     def new_file(self):
-        if not self.maybe_save_changes():
-            return
-        self.editor.clear()
-        self.preview.set_markdown("")
-        self.current_file = None
-        self.last_saved_text = ""
-
-    def _normalize_path(self, path):
-        # On Linux, ignore Windows drive-letter paths or backslashes
-        if sys.platform != "win32":
-            if path and ("\\" in path or (len(path) > 2 and path[1] == ':' and path[2] in ['\\', '/'])):
-                # Path is Windows-style, ignore/reset
-                return str(Path.home() / 'Documents' / 'Marknote')
-        # Normalize path for current OS
-        return os.path.abspath(os.path.normpath(path)) if path else str(Path.home() / 'Documents' / 'Marknote')
-
-    def get_or_create_default_folder(self):
-        config_path = os.path.join(os.path.dirname(__file__), 'config.json')
-        config = {}
-        default_folder = None
-        # Single config read
-        try:
-            if os.path.exists(config_path):
-                with open(config_path, 'r', encoding='utf-8') as f:
-                    config = json.load(f)
-                    default_folder = config.get('DEFAULT_FOLDER')
-        except Exception as e:
-            QMessageBox.warning(None, "Config Error", f"Could not read config.json:\n{e}")
-        # Normalize and validate path
-        default_folder = self._normalize_path(default_folder)
-        # If default_folder is set and exists, just use it (create if missing)
-        if default_folder and isinstance(default_folder, str):
-            folder_path = Path(default_folder)
-            if not folder_path.exists():
-                try:
-                    folder_path.mkdir(parents=True, exist_ok=True)
-                except Exception as e:
-                    QMessageBox.warning(None, "Config Error", f"Could not create default folder: {e}")
-            # Save config (single write)
-            try:
-                config['DEFAULT_FOLDER'] = str(folder_path)
-                with open(config_path, 'w', encoding='utf-8') as f:
-                    json.dump(config, f, indent=2)
-            except Exception as e:
-                QMessageBox.warning(None, "Config Error", f"Could not save default folder to config.json:\n{e}")
-            return str(folder_path)
-        # Otherwise prompt the user
-        user_choice = QMessageBox.question(None, "Default Folder", "No default folder is set.\nWould you like to use the system default (~/Documents/Marknote)?",
-                                           QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
-        if user_choice == QMessageBox.StandardButton.Yes:
-            default_folder = str(Path.home() / 'Documents' / 'Marknote')
-        else:
-            folder = QFileDialog.getExistingDirectory(None, "Select a folder for Marknote")
-            if folder:
-                default_folder = folder
-            else:
-                # fallback
-                default_folder = str(Path.home() / 'Documents' / 'Marknote')
-        # Normalize again
-        default_folder = self._normalize_path(default_folder)
-        # Save config (single write)
-        try:
-            config['DEFAULT_FOLDER'] = default_folder
-            with open(config_path, 'w', encoding='utf-8') as f:
-                json.dump(config, f, indent=2)
-        except Exception as e:
-            QMessageBox.warning(None, "Config Error", f"Could not save default folder to config.json:\n{e}")
-        # Create folder if it doesn't exist
-        os.makedirs(default_folder, exist_ok=True)
-        return default_folder
-
-    def save_last_note(self, path):
-        config_path = os.path.join(os.path.dirname(__file__), 'config.json')
-        try:
-            config = {}
-            if os.path.exists(config_path):
-                with open(config_path, 'r', encoding='utf-8') as f:
-                    config = json.load(f)
-            # Normalize path before saving
-            path = self._normalize_path(path)
-            config['LAST_NOTE'] = path
-            with open(config_path, 'w', encoding='utf-8') as f:
-                json.dump(config, f, indent=2)
-        except Exception as e:
-            QMessageBox.warning(self, "Config Error", f"Could not save last note to config.json:\n{e}")
-
-    def load_last_note(self):
-        config_path = os.path.join(os.path.dirname(__file__), 'config.json')
-        try:
-            if os.path.exists(config_path):
-                with open(config_path, 'r', encoding='utf-8') as f:
-                    config = json.load(f)
-                    last_note = config.get('LAST_NOTE')
-                    last_note = self._normalize_path(last_note)
-                    if last_note and os.path.exists(last_note) and last_note.endswith('.md'):
-                        self.load_markdown_file(last_note)
-        except Exception as e:
-            QMessageBox.warning(self, "Config Error", f"Could not load last note from config.json:\n{e}")
-
-    def insert_link(self):
-        # Insert a Markdown link template at the cursor
-        cursor = self.editor.SendScintilla
-        pos = self.editor.SendScintilla(self.editor.SCI_GETCURRENTPOS)
-        template = "[Link Text](https://example.com)"
-        self.editor.insert(template)
-        # Optionally, move cursor between brackets
+        if self.maybe_save_changes():
+            self.editor.clear()
+            self.current_file = None
+            self.last_saved_text = ""
+            self.setWindowTitle("Marknote - Untitled")
+            self.preview.set_markdown("")
+            # Do not add None or "Untitled" to recent files here
 
     def maybe_save_changes(self):
         """
@@ -694,6 +631,118 @@ class MainWindow(QMainWindow):
         else:
             self.editor.insert(result)
 
+    def update_recent_files_menu(self):
+        self.recent_files_menu.clear()
+        if not hasattr(self, 'recent_files_list') or not self.recent_files_list:
+            no_recent_action = QAction("(No recent files)", self)
+            no_recent_action.setEnabled(False)
+            self.recent_files_menu.addAction(no_recent_action)
+            return
+
+        for file_path in self.recent_files_list:
+            action = QAction(os.path.basename(file_path), self)
+            action.setData(file_path)
+            action.triggered.connect(self.open_recent_file_action)
+            self.recent_files_menu.addAction(action)
+
+    def open_recent_file_action(self):
+        action = self.sender()
+        if action:
+            file_path = action.data()
+            if file_path:
+                self.open_file(file_path)
+
+    MAX_RECENT_FILES = 10
+    RECENT_FILES_PATH = Path.home() / '.marknote_recent_files.json'
+
+    def load_recent_files(self):
+        if self.RECENT_FILES_PATH.exists():
+            try:
+                with open(self.RECENT_FILES_PATH, 'r') as f:
+                    self.recent_files_list = json.load(f)
+            except (IOError, json.JSONDecodeError):
+                self.recent_files_list = []
+        else:
+            self.recent_files_list = []
+        self.update_recent_files_menu()
+
+    def save_recent_files(self):
+        try:
+            with open(self.RECENT_FILES_PATH, 'w') as f:
+                json.dump(self.recent_files_list, f)
+        except IOError:
+            # Handle error (e.g., log it) if necessary
+            pass
+
+    def add_to_recent_files(self, file_path):
+        if not file_path: # Do not add None or empty paths
+            return
+        if file_path in self.recent_files_list:
+            self.recent_files_list.remove(file_path)
+        self.recent_files_list.insert(0, file_path)
+        self.recent_files_list = self.recent_files_list[:self.MAX_RECENT_FILES]
+        self.save_recent_files()
+        self.update_recent_files_menu()
+
+    def export_file_as(self):
+        if not self.editor.toPlainText():
+            QMessageBox.information(self, "Export As", "There is no content to export.")
+            return
+
+        file_path, selected_filter = QFileDialog.getSaveFileName(
+            self,
+            "Export File As",
+            self.default_folder, # Or derive a filename from current_file
+            "HTML Document (*.html);;Plain Text (*.txt)"
+        )
+
+        if not file_path:
+            return # User cancelled
+
+        content_to_save = ""
+        current_markdown_text = self.editor.toPlainText()
+
+        try:
+            if selected_filter == "HTML Document (*.html)":
+                if not file_path.lower().endswith('.html'):
+                    file_path += '.html'
+                # Basic HTML conversion, similar to preview but without live mermaid script
+                # For a standalone HTML, we might want to embed styles or provide a full HTML structure
+                html_content = markdown.markdown(current_markdown_text, extensions=['fenced_code'])
+                # Simple HTML wrapper
+                content_to_save = f"""<!DOCTYPE html>
+<html lang=\"en\">
+<head>
+    <meta charset=\"UTF-8\">
+    <title>Exported Markdown</title>
+    <style>
+        body {{ font-family: sans-serif; margin: 20px; line-height: 1.6; }}
+        code {{ background-color: #f4f4f4; padding: 2px 4px; border-radius: 3px; }}
+        pre {{ background-color: #f4f4f4; padding: 10px; border-radius: 3px; overflow-x: auto; }}
+    </style>
+</head>
+<body>
+{html_content}
+</body>
+</html>"""
+            elif selected_filter == "Plain Text (*.txt)":
+                if not file_path.lower().endswith('.txt'):
+                    file_path += '.txt'
+                content_to_save = current_markdown_text
+            else:
+                # Should not happen if filters are set correctly
+                QMessageBox.warning(self, "Export Error", "Invalid file type selected.")
+                return
+
+            with open(file_path, 'w', encoding='utf-8') as f:
+                f.write(content_to_save)
+            QMessageBox.information(self, "Export Successful", f"File exported successfully to {file_path}")
+
+        except Exception as e:
+            QMessageBox.critical(self, "Export Error", f"Could not export file: {e}")
+
+    def close_application(self):
+        self.close() # This will trigger the closeEvent
 
     def show_syntax_help(self):
         help_text = (
@@ -712,6 +761,110 @@ class MainWindow(QMainWindow):
             "<br>See <a href='https://mermaid-js.github.io/mermaid/#/'>Mermaid docs</a> for more.</br>"
         )
         QMessageBox.information(self, "Markdown & Mermaid Syntax", help_text)
+
+    def _normalize_path(self, path):
+        # On Linux, ignore Windows drive-letter paths or backslashes
+        if sys.platform != "win32":
+            if path and ("\\" in path or (len(path) > 2 and path[1] == ':' and path[2] in ['\\', '/'])):
+                # Path is Windows-style, ignore/reset
+                return str(Path.home() / 'Documents' / 'Marknote')
+        # Normalize path for current OS
+        return os.path.abspath(os.path.normpath(path)) if path else str(Path.home() / 'Documents' / 'Marknote')
+
+    def get_or_create_default_folder(self):
+        config_path = os.path.join(os.path.dirname(__file__), 'config.json')
+        config = {}
+        default_folder = None
+        # Single config read
+        try:
+            if os.path.exists(config_path):
+                with open(config_path, 'r', encoding='utf-8') as f:
+                    config = json.load(f)
+                    default_folder = config.get('DEFAULT_FOLDER')
+        except Exception as e:
+            QMessageBox.warning(None, "Config Error", f"Could not read config.json:\n{e}")
+        # Normalize and validate path
+        default_folder = self._normalize_path(default_folder)
+        # If default_folder is set and exists, just use it (create if missing)
+        if default_folder and isinstance(default_folder, str):
+            folder_path = Path(default_folder)
+            if not folder_path.exists():
+                try:
+                    folder_path.mkdir(parents=True, exist_ok=True)
+                except Exception as e:
+                    QMessageBox.warning(None, "Config Error", f"Could not create default folder: {e}")
+            # Save config (single write)
+            try:
+                config['DEFAULT_FOLDER'] = str(folder_path)
+                with open(config_path, 'w', encoding='utf-8') as f:
+                    json.dump(config, f, indent=2)
+            except Exception as e:
+                QMessageBox.warning(None, "Config Error", f"Could not save default folder to config.json:\n{e}")
+            return str(folder_path)
+        # Otherwise prompt the user
+        user_choice = QMessageBox.question(None, "Default Folder", "No default folder is set.\nWould you like to use the system default (~/Documents/Marknote)?",
+                                           QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        if user_choice == QMessageBox.StandardButton.Yes:
+            default_folder = str(Path.home() / 'Documents' / 'Marknote')
+        else:
+            folder = QFileDialog.getExistingDirectory(None, "Select a folder for Marknote")
+            if folder:
+                default_folder = folder
+            else:
+                # fallback
+                default_folder = str(Path.home() / 'Documents' / 'Marknote')
+        # Normalize again
+        default_folder = self._normalize_path(default_folder)
+        # Save config (single write)
+        try:
+            config['DEFAULT_FOLDER'] = default_folder
+            with open(config_path, 'w', encoding='utf-8') as f:
+                json.dump(config, f, indent=2)
+        except Exception as e:
+            QMessageBox.warning(None, "Config Error", f"Could not save default folder to config.json:\n{e}")
+        # Create folder if it doesn't exist
+        os.makedirs(default_folder, exist_ok=True)
+        return default_folder
+
+    def save_last_note(self, path):
+        config_path = os.path.join(os.path.dirname(__file__), 'config.json')
+        try:
+            config = {}
+            if os.path.exists(config_path):
+                with open(config_path, 'r', encoding='utf-8') as f:
+                    config = json.load(f)
+            # Normalize path before saving
+            path = self._normalize_path(path)
+            config['LAST_NOTE'] = path
+            with open(config_path, 'w', encoding='utf-8') as f:
+                json.dump(config, f, indent=2)
+        except Exception as e:
+            QMessageBox.warning(self, "Config Error", f"Could not save last note to config.json:\n{e}")
+
+    def load_last_note(self):
+        config_path = os.path.join(os.path.dirname(__file__), 'config.json')
+        try:
+            if os.path.exists(config_path):
+                with open(config_path, 'r', encoding='utf-8') as f:
+                    config = json.load(f)
+                    last_note = config.get('LAST_NOTE')
+                    last_note = self._normalize_path(last_note)
+                    if last_note and os.path.exists(last_note) and last_note.endswith('.md'):
+                        self.load_markdown_file(last_note)
+        except Exception as e:
+            QMessageBox.warning(self, "Config Error", f"Could not load last note from config.json:\n{e}")
+
+    def print_file(self):
+        # Placeholder: Implement printing functionality
+        QMessageBox.information(self, "Print", "Print functionality not yet implemented.")
+
+    def insert_link(self):
+        # Insert a Markdown link template at the cursor
+        cursor = self.editor.SendScintilla
+        pos = self.editor.SendScintilla(self.editor.SCI_GETCURRENTPOS)
+        template = "[Link Text](https://example.com)"
+        self.editor.insert(template)
+        # Optionally, move cursor between brackets
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
