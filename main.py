@@ -13,6 +13,7 @@ from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.Qsci import QsciScintilla, QsciLexerMarkdown
 import markdown
 import re
+import textwrap
 from ai import AIMarkdownAssistant
 
 class MarkdownEditor(QsciScintilla):
@@ -82,7 +83,7 @@ class MarkdownPreview(QWebEngineView):
         self.setHtml(html)
 
 class MainWindow(QMainWindow):
-    MENUBAR_STYLESHEET = """
+    MENUBAR_STYLESHEET = textwrap.dedent("""
         QMenuBar {
             background: #23252b;
             color: #61AFEF;
@@ -116,7 +117,7 @@ class MainWindow(QMainWindow):
             background: #282c34;
             margin: 4px 0px 4px 0px;
         }
-    """
+    """)
 
     def __init__(self):
         super().__init__()
