@@ -82,6 +82,42 @@ class MarkdownPreview(QWebEngineView):
         self.setHtml(html)
 
 class MainWindow(QMainWindow):
+    MENUBAR_STYLESHEET = """
+        QMenuBar {
+            background: #23252b;
+            color: #61AFEF;
+            font-size: 14px;
+        }
+        QMenuBar::item {
+            background: transparent;
+            color: #61AFEF;
+            padding: 4px 12px;
+        }
+        QMenuBar::item:selected {
+            background: #2c313a;
+            color: #98c379;
+        }
+        QMenu {
+            background: #23252b;
+            color: #d7dae0;
+            border: 1px solid #282c34;
+        }
+        QMenu::item {
+            background: transparent;
+            color: #d7dae0;
+            padding: 6px 24px 6px 24px;
+        }
+        QMenu::item:selected {
+            background: #2c313a;
+            color: #98c379;
+        }
+        QMenu::separator {
+            height: 1px;
+            background: #282c34;
+            margin: 4px 0px 4px 0px;
+        }
+    """
+
     def __init__(self):
         super().__init__()
         self.default_folder = self.get_or_create_default_folder()
@@ -119,41 +155,8 @@ class MainWindow(QMainWindow):
 
         # Menu bar with File and Help
         menubar = self.menuBar()
-        menubar.setStyleSheet("""
-            QMenuBar {
-                background: #23252b;
-                color: #61AFEF;
-                font-size: 14px;
-            }
-            QMenuBar::item {
-                background: transparent;
-                color: #61AFEF;
-                padding: 4px 12px;
-            }
-            QMenuBar::item:selected {
-                background: #2c313a;
-                color: #98c379;
-            }
-            QMenu {
-                background: #23252b;
-                color: #d7dae0;
-                border: 1px solid #282c34;
-            }
-            QMenu::item {
-                background: transparent;
-                color: #d7dae0;
-                padding: 6px 24px 6px 24px;
-            }
-            QMenu::item:selected {
-                background: #2c313a;
-                color: #98c379;
-            }
-            QMenu::separator {
-                height: 1px;
-                background: #282c34;
-                margin: 4px 0px 4px 0px;
-            }
-        """)
+        menubar.setStyleSheet(self.MENUBAR_STYLESHEET)
+
         # File Menu
         file_menu = menubar.addMenu("File")
 
