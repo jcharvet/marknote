@@ -2,6 +2,9 @@ import sys
 import os
 import json
 from pathlib import Path
+import re
+import textwrap
+
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
     QFileDialog, QToolBar, QMessageBox, QMenu, QLineEdit, QTextEdit, QSplitter, QTreeWidget, QTreeWidgetItem, QPushButton, QInputDialog
@@ -11,9 +14,9 @@ from PyQt6.QtGui import QFont, QColor, QPalette, QIcon
 from PyQt6.QtCore import Qt
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.Qsci import QsciScintilla, QsciLexerMarkdown
+
 import markdown
-import re
-import textwrap
+
 from ai import AIMarkdownAssistant
 
 class MarkdownEditor(QsciScintilla):
