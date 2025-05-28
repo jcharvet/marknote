@@ -5,6 +5,12 @@ import re
 import sys
 import textwrap
 
+from config_utils import (
+    load_app_config, save_app_config,
+    CONFIG_KEY_DEFAULT_FOLDER, CONFIG_KEY_LAST_NOTE,
+    CONFIG_FILE_NAME, CONFIG_KEY_GEMINI_API_KEY
+)
+
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QAction, QColor, QFont, QIcon, QKeySequence, QPalette
 from PyQt6.QtWidgets import (
@@ -339,17 +345,9 @@ class MainWindow(QMainWindow):
         if folder:
             self.default_folder = folder
             # Persist the new default folder to config.json
-            config_path = os.path.join(os.path.dirname(__file__), 'config.json')
-            try:
-                config = {}
-                if os.path.exists(config_path):
-                    with open(config_path, 'r', encoding='utf-8') as f:
-                        config = json.load(f)
-                config['DEFAULT_FOLDER'] = folder
-                with open(config_path, 'w', encoding='utf-8') as f:
-                    json.dump(config, f, indent=2)
-            except Exception as e:
-                QMessageBox.warning(self, "Config Error", f"Could not save default folder to config.json:\n{e}")
+            config = load_app_config()
+            config[CONFIG_KEY_DEFAULT_FOLDER] = folder
+            save_app_config(config) # Error message handled by save_app_config
             self.refresh_library()
 
     def open_tree_item(self, item, column):
@@ -778,88 +776,105 @@ class MainWindow(QMainWindow):
         return os.path.abspath(os.path.normpath(path)) if path else str(Path.home() / 'Documents' / 'Marknote')
 
     def get_or_create_default_folder(self):
-        config_path = os.path.join(os.path.dirname(__file__), 'config.json')
-        config = {}
-        default_folder = None
-        # Single config read
-        try:
-            if os.path.exists(config_path):
-                with open(config_path, 'r', encoding='utf-8') as f:
-                    config = json.load(f)
-                    default_folder = config.get('DEFAULT_FOLDER')
-        except Exception as e:
-            QMessageBox.warning(None, "Config Error", f"Could not read config.json:\n{e}")
-        # Normalize and validate path
-        default_folder = self._normalize_path(default_folder)
-        # If default_folder is set and exists, just use it (create if missing)
-        if default_folder and isinstance(default_folder, str):
-            folder_path = Path(default_folder)
-            if not folder_path.exists():
-                try:
-                    folder_path.mkdir(parents=True, exist_ok=True)
-                except Exception as e:
-                    QMessageBox.warning(None, "Config Error", f"Could not create default folder: {e}")
-            # Save config (single write)
-            try:
-                config['DEFAULT_FOLDER'] = str(folder_path)
-                with open(config_path, 'w', encoding='utf-8') as f:
-                    json.dump(config, f, indent=2)
-            except Exception as e:
-                QMessageBox.warning(None, "Config Error", f"Could not save default folder to config.json:\n{e}")
-            return str(folder_path)
-        # Otherwise prompt the user
-        user_choice = QMessageBox.question(None, "Default Folder", "No default folder is set.\nWould you like to use the system default (~/Documents/Marknote)?",
-                                           QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
-        if user_choice == QMessageBox.StandardButton.Yes:
-            default_folder = str(Path.home() / 'Documents' / 'Marknote')
-        else:
-            folder = QFileDialog.getExistingDirectory(None, "Select a folder for Marknote")
-            if folder:
-                default_folder = folder
-            else:
-                # fallback
-                default_folder = str(Path.home() / 'Documents' / 'Marknote')
-        # Normalize again
-        default_folder = self._normalize_path(default_folder)
-        # Save config (single write)
-        try:
-            config['DEFAULT_FOLDER'] = default_folder
-            with open(config_path, 'w', encoding='utf-8') as f:
-                json.dump(config, f, indent=2)
-        except Exception as e:
-            QMessageBox.warning(None, "Config Error", f"Could not save default folder to config.json:\n{e}")
-        # Create folder if it doesn't exist
-        os.makedirs(default_folder, exist_ok=True)
-        return default_folder
+        config = load_app_config()
+        default_folder_str = config.get(CONFIG_KEY_DEFAULT_FOLDER)
+        default_folder_str = self._normalize_path(default_folder_str) # Normalize once after getting from config
 
-    def save_last_note(self, path):
-        config_path = os.path.join(os.path.dirname(__file__), 'config.json')
+        if default_folder_str: # Check if a path was retrieved and normalized
+            folder_path = Path(default_folder_str)
+            try:
+                folder_path.mkdir(parents=True, exist_ok=True)
+                if not folder_path.is_dir(): # Ensure it's a directory after attempting creation
+                    # This case means path exists but isn't a dir, or mkdir failed to make it a dir
+                    raise OSError(f"Path '{folder_path}' is not a valid directory.")
+                
+                # If the path from config is valid and now exists as a directory, update config if necessary and return
+                if config.get(CONFIG_KEY_DEFAULT_FOLDER) != str(folder_path):
+                    config[CONFIG_KEY_DEFAULT_FOLDER] = str(folder_path)
+                    save_app_config(config) # Error message handled by save_app_config
+                return str(folder_path)
+            except OSError as e:
+                QMessageBox.warning(self, "Default Folder Error",
+                                    f"The configured default folder '{folder_path}' could not be used or created:\n{e}\nPlease choose a new default folder.")
+                # Force prompt by falling through as if no default_folder_str was set
+                default_folder_str = None 
+
+        # If no valid default_folder_str from config (either initially or after error)
+        user_choice = QMessageBox.question(
+            self, "Default Folder Setup",
+            "No default folder is set or the previous one was invalid.\n"
+            "Would you like to use the system default (~/Documents/Marknote)?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+
+        if user_choice == QMessageBox.StandardButton.Yes:
+            chosen_folder_str = str(Path.home() / 'Documents' / 'Marknote')
+        else:
+            dialog_path = QFileDialog.getExistingDirectory(self, "Select Default Folder for Marknote")
+            if dialog_path:
+                chosen_folder_str = dialog_path
+            else:
+                chosen_folder_str = str(Path.home() / 'Documents' / 'Marknote')
+                QMessageBox.information(self, "Default Folder", 
+                                        f"No folder selected. Using system default: {chosen_folder_str}")
+        
+        final_default_folder_str = self._normalize_path(chosen_folder_str)
+        final_folder_path = Path(final_default_folder_str)
+
         try:
-            config = {}
-            if os.path.exists(config_path):
-                with open(config_path, 'r', encoding='utf-8') as f:
-                    config = json.load(f)
-            # Normalize path before saving
-            path = self._normalize_path(path)
-            config['LAST_NOTE'] = path
-            with open(config_path, 'w', encoding='utf-8') as f:
-                json.dump(config, f, indent=2)
-        except Exception as e:
-            QMessageBox.warning(self, "Config Error", f"Could not save last note to config.json:\n{e}")
+            final_folder_path.mkdir(parents=True, exist_ok=True)
+            if not final_folder_path.is_dir():
+                raise OSError(f"Chosen path '{final_folder_path}' could not be established as a directory.")
+            
+            config[CONFIG_KEY_DEFAULT_FOLDER] = str(final_folder_path)
+            if not save_app_config(config):
+                QMessageBox.warning(self, "Configuration Save Error", 
+                                    "The chosen default folder was created, but could not be saved to the configuration file.")
+            return str(final_folder_path)
+        except OSError as e:
+            QMessageBox.critical(self, "Fatal Default Folder Error",
+                                 f"Could not create the chosen default folder '{final_folder_path}':\n{e}\n"
+                                 "Marknote will use a temporary fallback in your home directory.")
+            # Fallback to a temporary, likely writable path
+            fallback_path_str = str(Path.home() / "Marknote_Temp_Default")
+            try:
+                Path(fallback_path_str).mkdir(parents=True, exist_ok=True)
+                return fallback_path_str
+            except Exception as fallback_e:
+                # Ultimate fallback if even temp creation fails
+                QMessageBox.critical(self, "Critical Error", f"Failed to create even a temporary fallback folder: {fallback_e}")
+                return str(Path.home()) # Last resort
+
+    def save_last_note(self, path: str):
+        config = load_app_config()
+        normalized_path = self._normalize_path(path)
+        if normalized_path: # Ensure path is not None or empty after normalization
+            config[CONFIG_KEY_LAST_NOTE] = normalized_path
+            save_app_config(config) # save_app_config handles its own error messages
+        else:
+            # This case might occur if path is None or becomes empty after normalization
+            # Depending on desired behavior, one might remove the key or log a warning
+            if CONFIG_KEY_LAST_NOTE in config:
+                del config[CONFIG_KEY_LAST_NOTE]
+                save_app_config(config)
+            print(f"Warning: Attempted to save an invalid or empty path for last note: {path}")
 
     def load_last_note(self):
-        config_path = os.path.join(os.path.dirname(__file__), 'config.json')
-        try:
-            if os.path.exists(config_path):
-                with open(config_path, 'r', encoding='utf-8') as f:
-                    config = json.load(f)
-                    last_note = config.get('LAST_NOTE')
-                    last_note = self._normalize_path(last_note)
-                    if last_note and os.path.exists(last_note) and last_note.endswith('.md'):
-                        self.load_markdown_file(last_note)
-        except Exception as e:
-            QMessageBox.warning(self, "Config Error", f"Could not load last note from config.json:\n{e}")
+        config = load_app_config()
+        last_note_path_str = config.get(CONFIG_KEY_LAST_NOTE)
 
+        if last_note_path_str:
+            normalized_path_str = self._normalize_path(last_note_path_str)
+            if normalized_path_str:
+                last_note_path = Path(normalized_path_str)
+                if last_note_path.exists() and last_note_path.is_file() and last_note_path.suffix.lower() == '.md':
+                    self.load_markdown_file(str(last_note_path))
+                # else:
+                    # Optional: If the last note path is invalid/missing, clear it from config
+                    # if CONFIG_KEY_LAST_NOTE in config:
+                    #     del config[CONFIG_KEY_LAST_NOTE]
+                    #     save_app_config(config)
+                    #     print(f"Info: Last note '{normalized_path_str}' not found or invalid. Cleared from config.")
     def print_file(self):
         # Placeholder: Implement printing functionality
         QMessageBox.information(self, "Print", "Print functionality not yet implemented.")

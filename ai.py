@@ -8,24 +8,25 @@ Set your Gemini API key as an environment variable: GEMINI_API_KEY
 import os
 import requests
 
+from config_utils import load_app_config, CONFIG_KEY_GEMINI_API_KEY
+
 GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
 
 class AIMarkdownAssistant:
     def __init__(self, api_key=None):
-        # Try config.json first, then environment variable
         self.api_key = api_key
         if not self.api_key:
-            import json
-            try:
-                with open("config.json", "r") as f:
-                    config = json.load(f)
-                    self.api_key = config.get("GEMINI_API_KEY", "")
-            except Exception:
-                self.api_key = ""
-        if not self.api_key:
+            config = load_app_config()
+            self.api_key = config.get(CONFIG_KEY_GEMINI_API_KEY)
+
+        if not self.api_key: # If not found in config, try environment variable
             self.api_key = os.environ.get("GEMINI_API_KEY", "")
-        if not self.api_key:
-            raise ValueError("Gemini API key not set. Please add it to config.json or set GEMINI_API_KEY environment variable.")
+
+        if not self.api_key: # If still not found, raise error
+            raise ValueError(
+                f"Gemini API key not set. Please add it to {CONFIG_KEY_GEMINI_API_KEY} in config.json "
+                f"or set the GEMINI_API_KEY environment variable."
+            )
 
     def _gemini_request(self, prompt, max_tokens=512):
         headers = {"Content-Type": "application/json"}
