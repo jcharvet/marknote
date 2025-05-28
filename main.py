@@ -1,23 +1,22 @@
-import sys
-import os
 import json
+import os
 from pathlib import Path
 import re
+import sys
 import textwrap
 
-from PyQt6.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
-    QFileDialog, QToolBar, QMessageBox, QMenu, QLineEdit, QTextEdit, QSplitter, QTreeWidget, QTreeWidgetItem, QPushButton, QInputDialog
-)
-from PyQt6.QtGui import QAction, QKeySequence
-from PyQt6.QtGui import QFont, QColor, QPalette, QIcon
 from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QAction, QColor, QFont, QIcon, QKeySequence, QPalette
+from PyQt6.QtWidgets import (
+    QApplication, QFileDialog, QHBoxLayout, QInputDialog, QLineEdit,
+    QMainWindow, QMenu, QMessageBox, QPushButton, QSplitter, QTextEdit,
+    QToolBar, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget
+)
+from PyQt6.Qsci import QsciLexerMarkdown, QsciScintilla
 from PyQt6.QtWebEngineWidgets import QWebEngineView
-from PyQt6.Qsci import QsciScintilla, QsciLexerMarkdown
-
-import markdown
 
 from ai import AIMarkdownAssistant
+import markdown
 
 class MarkdownEditor(QsciScintilla):
     def __init__(self, parent=None):
