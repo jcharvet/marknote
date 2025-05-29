@@ -9,3 +9,9 @@ Always check the markdown_utils.py file for the markdown utilities.
 Always check the ui_utils.py file for the UI utilities.    
 Always check the utils.py file for the utilities.    
 Always check the markdown_utils.py file for the markdown utilities.    
+Always create a new branch for each feature or bug fix.
+Always commit after each change.
+Always push after each commit.
+Always create a pull request for each feature or bug fix.
+Always merge the pull request after it has been approved.
+Branch naming convention: feature/feature_name or bugfix/bugfix_name
