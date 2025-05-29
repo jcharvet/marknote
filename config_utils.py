@@ -1,4 +1,5 @@
 import json
+import logging
 from pathlib import Path
 from PyQt6.QtWidgets import QMessageBox # Required for save_app_config
 
@@ -20,11 +21,27 @@ def _get_config_path() -> Path:
     If main.py was calling this and main.py was in root, it was Path(main_py__file__)... etc.
     Let's assume config_utils.py is in the same directory as main.py for now.
     """
-    # This path will be relative to THIS file (config_utils.py).
-    # If config.json is truly at the project root and config_utils.py is also there,
-    # this is fine. If config_utils.py is in a subdir, this needs care.
-    # Assuming f:\Projects\marknote\config_utils.py and f:\Projects\marknote\config.json
-    return Path(__file__).resolve().parent / CONFIG_FILE_NAME
+    current_path = Path(__file__).resolve().parent
+    project_root = None
+    # Ascend up to 5 levels to find .git directory
+    for _ in range(5):
+        if (current_path / ".git").is_dir():
+            project_root = current_path
+            break
+        if current_path.parent == current_path: # Reached the root of the filesystem
+            break
+        current_path = current_path.parent
+
+    if project_root:
+        config_path = project_root / CONFIG_FILE_NAME
+    else:
+        original_path = Path(__file__).resolve().parent / CONFIG_FILE_NAME
+        logging.warning(
+            f"Could not determine project root. Falling back to original config path: {original_path}"
+        )
+        config_path = original_path
+    
+    return config_path.resolve() # Ensure absolute path
 
 def load_app_config() -> dict:
     """Loads the application configuration from config.json.

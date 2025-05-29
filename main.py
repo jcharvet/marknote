@@ -1,3 +1,10 @@
+"""
+main.py
+
+This module defines the main application window for Marknote, a Markdown editor
+with AI-assisted features. It includes the primary UI components, event handling,
+file operations, and integration with AI and configuration utilities.
+"""
 import json
 import os
 from pathlib import Path
@@ -25,9 +32,85 @@ from PyQt6.QtPrintSupport import QPrinter, QPrintDialog
 from ai import AIMarkdownAssistant
 import markdown
 
+class RecentFilesManager:
+    """
+    Manages the list of recently opened files.
+
+    This class handles loading, saving, and updating the list of recent files,
+    persisting it to a JSON file in the user's home directory.
+    """
+    MAX_RECENT_FILES = 10
+    RECENT_FILES_PATH = Path.home() / '.marknote_recent_files.json'
+
+    def __init__(self):
+        """Initializes RecentFilesManager, loading recent files from disk."""
+        self.recent_files_list: list[str] = []
+        self.load_recent_files()
+
+    def load_recent_files(self):
+        """Loads the recent files list from a JSON file."""
+        if self.RECENT_FILES_PATH.exists():
+            try:
+                with open(self.RECENT_FILES_PATH, 'r', encoding='utf-8') as f:
+                    self.recent_files_list = json.load(f)
+            except (IOError, json.JSONDecodeError) as e:
+                # Log or handle error, e.g., by informing the user or resetting the list
+                print(f"Error loading recent files: {e}")
+                self.recent_files_list = []
+        else:
+            self.recent_files_list = []
+
+    def save_recent_files(self):
+        """Saves the current list of recent files to a JSON file."""
+        try:
+            with open(self.RECENT_FILES_PATH, 'w', encoding='utf-8') as f:
+                json.dump(self.recent_files_list, f, indent=2)
+        except IOError as e:
+            # Log or display an error message to the user
+            print(f"Error saving recent files: {e}")
+            # Optionally, inform the user via QMessageBox if critical
+
+    def add_to_recent_files(self, file_path: str):
+        """
+        Adds a file path to the list of recent files.
+
+        If the path is already in the list, it's moved to the top.
+        The list is capped at MAX_RECENT_FILES.
+
+        Args:
+            file_path (str): The path of the file to add.
+        """
+        if not file_path: # Do not add None or empty paths
+            return
+        
+        normalized_path = str(Path(file_path).resolve()) # Ensure consistent path format
+
+        if normalized_path in self.recent_files_list:
+            self.recent_files_list.remove(normalized_path)
+        self.recent_files_list.insert(0, normalized_path)
+        # Keep the list at the maximum allowed size
+        self.recent_files_list = self.recent_files_list[:self.MAX_RECENT_FILES]
+        self.save_recent_files()
+
 class MarkdownEditor(QsciScintilla):
+    """
+    A custom QsciScintilla widget tailored for Markdown editing.
+
+    It includes syntax highlighting for Markdown, dark mode theme,
+    and other editor features like auto-indent and folding.
+    """
     def __init__(self, parent=None):
+        """
+        Initializes the MarkdownEditor.
+
+        Args:
+            parent (QWidget, optional): The parent widget. Defaults to None.
+        """
         super().__init__(parent)
+        self._configure_editor()
+
+    def _configure_editor(self):
+        """Sets up the editor's appearance and behavior."""
         # Set lexer for Markdown
         lexer = QsciLexerMarkdown()
         lexer.setDefaultFont(QFont("Fira Mono", 12))
@@ -46,55 +129,119 @@ class MarkdownEditor(QsciScintilla):
         self.setFolding(QsciScintilla.FoldStyle.BoxedTreeFoldStyle)
         self.setTabWidth(4)
         self.setIndentationsUseTabs(False)
-        self.setFont(QFont("Fira Mono", 12))
-        self.setStyleSheet("background-color: #282c34; color: #d7dae0;")
+        self.setFont(QFont("Fira Mono", 12)) # Default font for text
+        self.setStyleSheet("background-color: #282c34; color: #d7dae0;") # Ensure base styling
 
-    def toPlainText(self):
+    def toPlainText(self) -> str:
+        """
+        Returns the entire text content of the editor.
+
+        Returns:
+            str: The editor's current text.
+        """
         return self.text()
 
-    def setPlainText(self, text):
+    def setPlainText(self, text: str):
+        """
+        Sets the text content of the editor.
+
+        Args:
+            text (str): The text to set.
+        """
         self.setText(text)
 
     def clear(self):
+        """Clears all text from the editor."""
         self.setText("")
 
 class MarkdownPreview(QWebEngineView):
+    """
+    A custom QWebEngineView widget for rendering Markdown as HTML.
+
+    It supports standard Markdown and Mermaid diagrams.
+    The preview is themed for dark mode.
+    """
     def __init__(self, parent=None):
+        """
+        Initializes the MarkdownPreview.
+
+        Args:
+            parent (QWidget, optional): The parent widget. Defaults to None.
+        """
         super().__init__(parent)
         self.setStyleSheet("background-color: #21252b; color: #d7dae0; font-family: sans-serif;")
-        # Attempted to enable print support, but PrintSupportEnabled is not a valid WebAttribute.
-        # settings = self.page().settings()
-        # settings.setAttribute(QWebEngineSettings.WebAttribute.PrintSupportEnabled, True) # This line caused AttributeError
+        # Note: QWebEngineSettings.WebAttribute.PrintSupportEnabled was problematic and removed.
+        # Printing is handled via QPrintDialog and page().print() in MainWindow.
 
-    def set_markdown(self, text):
-        # Detect ```mermaid code blocks in raw Markdown
-        def mermaid_replacer(match):
+    def set_markdown(self, text: str):
+        """
+        Renders the given Markdown text as HTML in the preview pane.
+
+        Mermaid diagrams (```mermaid ... ```) are detected and rendered
+        by injecting the Mermaid.js library.
+
+        Args:
+            text (str): The Markdown text to render.
+        """
+        # Define a replacer function for Mermaid code blocks
+        def mermaid_replacer(match: re.Match) -> str:
             code = match.group(1)
+            # Enclose Mermaid code in a div for Mermaid.js to process
             return f'<div class="mermaid">{code}</div>'
-        # Replace all ```mermaid ... ``` blocks
+        
+        # Replace all ```mermaid ... ``` blocks with the HTML structure
         mermaid_pattern = re.compile(r'```mermaid\s*([\s\S]*?)```', re.MULTILINE)
-        text_with_mermaid = mermaid_pattern.sub(mermaid_replacer, text)
-        # Convert to HTML
-        html = markdown.markdown(text_with_mermaid, extensions=['fenced_code'])
-        # If any mermaid blocks, inject Mermaid.js
-        if '<div class="mermaid">' in html:
-            html = f'''
+        text_with_mermaid_divs = mermaid_pattern.sub(mermaid_replacer, text)
+        
+        # Convert Markdown to HTML (including the divs for Mermaid)
+        html_body = markdown.markdown(text_with_mermaid_divs, extensions=['fenced_code'])
+        
+        # Construct the full HTML document
+        # Basic dark theme styling is applied via <style>
+        # If Mermaid diagrams are present, the Mermaid.js script is included from a CDN.
+        if '<div class="mermaid">' in html_body:
+            full_html = f'''
             <html>
             <head>
-                <style>body {{ background: #21252b; color: #d7dae0; }}</style>
+                <style>
+                    body {{ background: #21252b; color: #d7dae0; font-family: sans-serif; }}
+                    /* Add more styles for code blocks, etc., if needed */
+                    pre {{ background-color: #282c34; padding: 10px; border-radius: 5px; overflow-x: auto; }}
+                    code {{ font-family: "Fira Mono", monospace; }}
+                </style>
                 <script type="module">
+                  // Dynamically import and initialize Mermaid.js
                   import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
                   mermaid.initialize({{ startOnLoad: true }});
                 </script>
             </head>
-            <body>{html}</body>
+            <body>{html_body}</body>
             </html>
             '''
         else:
-            html = f'''<html><head><style>body {{ background: #21252b; color: #d7dae0; }}</style></head><body>{html}</body></html>'''
-        self.setHtml(html)
+            # HTML without Mermaid.js if no diagrams detected
+            full_html = f'''
+            <html>
+            <head>
+                <style>
+                    body {{ background: #21252b; color: #d7dae0; font-family: sans-serif; }}
+                    pre {{ background-color: #282c34; padding: 10px; border-radius: 5px; overflow-x: auto; }}
+                    code {{ font-family: "Fira Mono", monospace; }}
+                </style>
+            </head>
+            <body>{html_body}</body>
+            </html>'''
+        self.setHtml(full_html)
 
 class MainWindow(QMainWindow):
+    """
+    The main application window for Marknote.
+
+    This class orchestrates the UI components, including the editor, preview,
+    file library, menus, and AI command bar. It handles file operations,
+    AI interactions, and overall application state.
+    """
+    # Stylesheet for the menubar, giving it a dark theme consistent appearance
     MENUBAR_STYLESHEET = textwrap.dedent("""
         QMenuBar {
             background: #23252b;
@@ -132,17 +279,35 @@ class MainWindow(QMainWindow):
     """)
 
     def __init__(self):
+        """Initializes the MainWindow, setting up UI, loading configurations, and recent files."""
         super().__init__()
-        self.default_folder = self.get_or_create_default_folder()
+        
+        # Determine and set up the default folder for documents
+        self.default_folder: str = self.get_or_create_default_folder()
+        
         self.setWindowTitle("Marknote - Markdown Editor with AI")
-        self.resize(1100, 700)
-        self.current_file = None
-        self.last_saved_text = ""
-        self.init_ui()
-        self.load_last_note()
-        self.load_recent_files()
+        self.resize(1100, 700) # Set initial window size
+        
+        # State variables
+        self.current_file: str | None = None # Path to the currently open file
+        self.last_saved_text: str = ""      # Content of the editor when last saved
+        
+        # Initialize UI components by calling helper methods
+        self._init_menubar()
+        self._init_library_panel() # Must be called before _init_editor_preview_splitter if splitter uses library_panel
+        self._init_editor_preview_splitter()
+        self._init_command_bar()
+        
+        # Finalize UI setup (central widget, layout)
+        self._setup_central_widget() 
+        
+        # Instantiate managers and load initial state
+        self.recent_files_manager = RecentFilesManager()
+        self.load_last_note() # Load the last opened note
+        self.update_recent_files_menu() # Populate the "Open Recent" menu
 
     def print_document(self):
+        """Handles printing of the current document via the preview pane."""
         if not self.preview:
             QMessageBox.critical(self, "Error", "Preview pane is not available.")
             return
@@ -151,54 +316,160 @@ class MainWindow(QMainWindow):
         dialog = QPrintDialog(printer, self)
 
         if dialog.exec() == QPrintDialog.DialogCode.Accepted:
+            # Use an event loop to wait for the asynchronous print operation to finish
+            # This prevents the application from freezing during printing.
             loop = QEventLoop()
-            # Connect the printFinished signal to our handler and the loop's quit slot
-            self.preview.printFinished.connect(self._handle_print_finished)
-            self.preview.printFinished.connect(loop.quit)
             
-            self.preview.print(printer)
+            # Connect the printFinished signal to a handler and the loop's quit slot
+            self.preview.page().printFinished.connect(self._handle_print_finished) # Corrected: page().printFinished
+            self.preview.page().printFinished.connect(loop.quit) # Corrected: page().printFinished
             
-            # Execute the event loop to wait for printing to finish
-            # Exclude user input events to prevent interaction issues during printing
+            self.preview.page().print(printer, lambda success: None) # Print the content of the web page
+            
+            # Execute the event loop, excluding user input to prevent interaction issues
             loop.exec(QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents)
             
-            # It's good practice to disconnect signals after use if they are connected in a temporary way
+            # Disconnect signals after use to avoid multiple calls if print_document is called again
             try:
-                self.preview.printFinished.disconnect(self._handle_print_finished)
-                self.preview.printFinished.disconnect(loop.quit)
-            except TypeError: # Signal already disconnected or never connected
+                self.preview.page().printFinished.disconnect(self._handle_print_finished) # Corrected
+                self.preview.page().printFinished.disconnect(loop.quit) # Corrected
+            except TypeError: 
+                # This can happen if the signal was already disconnected or never connected properly.
                 pass 
         else:
-            print("Print dialog cancelled by user.")
+            print("Print dialog cancelled by user.") # Log or inform user
 
     def _handle_print_finished(self, success: bool):
+        """
+        Callback for when the print operation is finished.
+
+        Args:
+            success (bool): True if printing was successful, False otherwise.
+        """
         if success:
             print("Print operation successful.")
-            # QMessageBox.information(self, "Print Status", "Document printed successfully.") # Optional: user feedback
+            # Optionally, inform the user with a QMessageBox
+            # QMessageBox.information(self, "Print Status", "Document printed successfully.")
         else:
             print("Print operation failed.")
             QMessageBox.warning(self, "Print Error", "Could not print the document.")
         
-        # This handler might be called multiple times if connected elsewhere, 
-        # or if the print operation has multiple stages that emit printFinished.
-        # For now, simple print statements are fine.
+    def command_bar_key_press_event(self, event: QEvent): # Added type hint for event
+        """
+        Handles key press events for the AI command bar.
+        Specifically, Ctrl+Enter executes the command.
 
-    def command_bar_key_press_event(self, event):
-        from PyQt6.QtGui import QKeyEvent
-        if event.modifiers() == Qt.KeyboardModifier.ControlModifier and event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
-            self.execute_command()
+        Args:
+            event (QEvent): The key event.
+        """
+        from PyQt6.QtGui import QKeyEvent # Local import for type checking if needed
+        if isinstance(event, QKeyEvent): # Ensure it's a QKeyEvent
+            if event.modifiers() == Qt.KeyboardModifier.ControlModifier and \
+               event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+                self.execute_command()
+            else:
+                # Default handling for other key presses in the QTextEdit
+                QTextEdit.keyPressEvent(self.command_bar, event) 
         else:
+            # Fallback for other event types, though primarily expecting QKeyEvent
             QTextEdit.keyPressEvent(self.command_bar, event)
 
-    def closeEvent(self, event):
-        # Prompt to save on close
+
+    def closeEvent(self, event: QEvent): # Added type hint for event
+        """
+        Handles the window close event.
+
+        Prompts the user to save unsaved changes and saves the last note/recent files.
+
+        Args:
+            event (QEvent): The close event.
+        """
         if not self.maybe_save_changes():
-            event.ignore()
+            event.ignore() # Abort closing if user cancels or save fails
         else:
+            # Save the path of the current file as the last opened note
             if self.current_file and self.current_file.endswith('.md'):
                 self.save_last_note(self.current_file)
-                self.add_to_recent_files(self.current_file)
-            event.accept()
+            # Add current file to recent files list (manager handles duplicates)
+            if self.current_file: # Ensure current_file is not None
+                self.recent_files_manager.add_to_recent_files(self.current_file)
+            event.accept() # Proceed with closing
+
+    def _init_menubar(self):
+        """Initializes the main menubar and its menus (File, Other, Help)."""
+        menubar = self.menuBar()
+        menubar.setStyleSheet(self.MENUBAR_STYLESHEET)
+
+        # --- File Menu ---
+        file_menu = menubar.addMenu("File")
+
+        new_action = QAction("New", self)
+        new_action.triggered.connect(self.new_file)
+        file_menu = menubar.addMenu("File")
+        
+        new_action = QAction("New", self)
+        new_action.triggered.connect(self.new_file)
+        file_menu.addAction(new_action)
+
+        open_file_action = QAction("Open File", self)
+        open_file_action.triggered.connect(self.open_file)
+        file_menu.addAction(open_file_action)
+
+        open_folder_action = QAction("Open Folder", self)
+        open_folder_action.triggered.connect(self.open_folder)
+        file_menu.addAction(open_folder_action)
+
+        self.recent_files_menu = QMenu("Open Recent", self) # Menu for recent files
+        file_menu.addMenu(self.recent_files_menu)
+        # update_recent_files_menu is called during __init__ after manager is ready
+
+        file_menu.addSeparator()
+
+        save_action = QAction("Save", self)
+        save_action.setShortcut(QKeySequence.StandardKey.Save) # Use standard shortcut
+        save_action.triggered.connect(self.save_file)
+        file_menu.addAction(save_action)
+
+        save_as_action = QAction("Save As...", self) # Standard naming
+        save_as_action.setShortcut(QKeySequence("Ctrl+Shift+S"))
+        save_as_action.triggered.connect(self.save_file_as)
+        file_menu.addAction(save_as_action)
+
+        file_menu.addSeparator()
+
+        print_action = QAction("Print...", self) # Standard naming
+        print_action.setShortcut(QKeySequence.StandardKey.Print) # Use standard shortcut
+        print_action.triggered.connect(self.print_document)
+        file_menu.addAction(print_action)
+
+        file_menu.addSeparator()
+
+        export_as_action = QAction("Export As...", self)
+        export_as_action.triggered.connect(self.export_file_as)
+        file_menu.addAction(export_as_action)
+
+
+        exit_action = QAction("Exit", self)
+        exit_action.triggered.connect(self.close_application) # Or self.close directly
+        file_menu.addAction(exit_action)
+
+        # Other Menu
+        other_menu = menubar.addMenu("Other")
+
+        link_action = QAction("Link", self)
+        link_action.triggered.connect(self.insert_link)
+        other_menu.addAction(link_action)
+
+        ai_command_action = QAction("AI Command", self)
+        ai_command_action.setShortcut(QKeySequence("Ctrl+Shift+Space"))
+        ai_command_action.triggered.connect(self.show_command_bar)
+        other_menu.addAction(ai_command_action)
+
+        # Help Menu
+        help_menu = menubar.addMenu("Help")
+        syntax_action = QAction("Markdown & Mermaid Syntax", self) # This maps to "Help feature"
+        syntax_action.triggered.connect(self.show_syntax_help)
+        help_menu.addAction(syntax_action)
 
     def init_ui(self):
         # Set dark palette
@@ -256,271 +527,450 @@ class MainWindow(QMainWindow):
         export_as_action.triggered.connect(self.export_file_as)
         file_menu.addAction(export_as_action)
 
+        file_menu.addSeparator() # Added separator for consistency
 
         exit_action = QAction("Exit", self)
-        exit_action.triggered.connect(self.close_application) # Or self.close directly
+        exit_action.triggered.connect(self.close_application)
         file_menu.addAction(exit_action)
 
-        # Other Menu
+        # --- Other Menu ---
         other_menu = menubar.addMenu("Other")
 
-        link_action = QAction("Link", self)
+        link_action = QAction("Insert Link", self) # More descriptive
         link_action.triggered.connect(self.insert_link)
         other_menu.addAction(link_action)
 
-        ai_command_action = QAction("AI Command", self)
+        ai_command_action = QAction("AI Command Bar", self) # More descriptive
         ai_command_action.setShortcut(QKeySequence("Ctrl+Shift+Space"))
         ai_command_action.triggered.connect(self.show_command_bar)
         other_menu.addAction(ai_command_action)
-
-        # Help Menu
+        
+        # --- Help Menu ---
         help_menu = menubar.addMenu("Help")
-        syntax_action = QAction("Markdown & Mermaid Syntax", self) # This maps to "Help feature"
+        syntax_action = QAction("Markdown & Mermaid Syntax", self)
         syntax_action.triggered.connect(self.show_syntax_help)
         help_menu.addAction(syntax_action)
 
-        # Document library area
-        library_panel = QWidget()
-        library_layout = QVBoxLayout()
-        library_layout.setContentsMargins(0,0,0,0)
-        library_panel.setLayout(library_layout)
 
-        # Search bar
+    def _init_library_panel(self):
+        """Initializes the document library panel on the left."""
+        self.library_panel = QWidget() # Store as instance variable
+        library_layout = QVBoxLayout()
+        library_layout.setContentsMargins(0, 0, 0, 0) # No external margins
+        self.library_panel.setLayout(library_layout)
+
+        # Search bar for filtering library items
         self.search_bar = QLineEdit()
         self.search_bar.setPlaceholderText("Search documents...")
         self.search_bar.textChanged.connect(self.filter_library)
         library_layout.addWidget(self.search_bar)
 
-        # New Folder button
+        # Button to create a new folder
         self.folder_btn = QPushButton("New Folder")
         self.folder_btn.clicked.connect(self.create_folder)
         self.folder_btn.setStyleSheet("background: #282c34; color: #98c379; border: none; padding: 5px;")
         library_layout.addWidget(self.folder_btn)
 
-        # QTreeWidget for files/folders
+        # Tree widget to display files and folders
         self.library = QTreeWidget()
-        self.library.setHeaderHidden(True)
-        self.library.setStyleSheet("background: #23252b; color: #61AFEF; font-size: 13px;")
-        self.library.setMaximumWidth(210)
+        self.library.setHeaderHidden(True) # No header for the tree
+        self.library.setStyleSheet("background: #23252b; color: #61AFEF; font-size: 13px; border: none;") # Themed
+        self.library.setMaximumWidth(210) # Limit width of library panel
+        self.library.itemClicked.connect(self.open_tree_item)
+        # Enable custom context menu for library items (e.g., rename, delete)
+        self.library.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.library.customContextMenuRequested.connect(self.show_library_context_menu)
+        library_layout.addWidget(self.library)
+        
+        self.refresh_library() # Initial population of the library
+
+    def _init_editor_preview_splitter(self):
+        """Initializes the Markdown editor, preview pane, and the splitter managing them."""
+        self.editor = MarkdownEditor()
+        self.preview = MarkdownPreview()
+        """
+        Initializes the main UI components of the application.
+        This method sets the overall dark palette and then calls helper methods
+        to initialize specific parts of the UI like menubar, library panel, etc.
+        It's now primarily responsible for setting up the central widget and layout.
+        """
+        # Set a dark color palette for the application
+        palette = QPalette()
+        palette.setColor(QPalette.ColorRole.Window, QColor("#282c34"))
+        palette.setColor(QPalette.ColorRole.WindowText, QColor("#d7dae0"))
+        # ... (set other colors for a complete dark theme if needed)
+        self.setPalette(palette)
+
+        # The individual UI components (menubar, library, editor, etc.) are
+        # initialized by their respective _init_* methods called from __init__.
+        # This method, init_ui, is now more about assembling the central structure.
+        self._setup_central_widget()
+        
+        self.update_preview() # Initial preview update
+
+    def _setup_central_widget(self):
+        """
+        Sets up the central widget, layout, and integrates the main UI components
+        (splitter, command bar).
+        """
+        central_widget = QWidget()
+        central_layout = QVBoxLayout()
+        central_layout.setContentsMargins(0, 0, 0, 0) # No margins for the main layout
+        central_layout.setSpacing(0) # No spacing between widgets in this layout
+        central_widget.setLayout(central_layout)
+        self.setCentralWidget(central_widget)
+
+        # The splitter contains the library panel and the editor/preview area
+        central_layout.addWidget(self.splitter)
+        
+        # The AI command bar is added below the splitter
+        central_layout.addWidget(self.command_bar_widget)
+
+
+    def _init_library_panel(self):
+        """Initializes the document library panel on the left side of the window."""
+        self.library_panel = QWidget() 
+        library_layout = QVBoxLayout()
+        library_layout.setContentsMargins(0, 0, 0, 0) 
+        self.library_panel.setLayout(library_layout)
+
+        self.search_bar = QLineEdit()
+        self.search_bar.setPlaceholderText("Search documents...")
+        self.search_bar.textChanged.connect(self.filter_library)
+        library_layout.addWidget(self.search_bar)
+
+        self.folder_btn = QPushButton("New Folder")
+        self.folder_btn.clicked.connect(self.create_folder)
+        self.folder_btn.setStyleSheet("background: #282c34; color: #98c379; border: none; padding: 5px;")
+        library_layout.addWidget(self.folder_btn)
+
+        self.library = QTreeWidget()
+        self.library.setHeaderHidden(True) 
+        self.library.setStyleSheet("background: #23252b; color: #61AFEF; font-size: 13px; border: none;")
+        self.library.setMaximumWidth(210) 
         self.library.itemClicked.connect(self.open_tree_item)
         self.library.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.library.customContextMenuRequested.connect(self.show_library_context_menu)
         library_layout.addWidget(self.library)
+        
         self.refresh_library()
 
-        # Editor and preview
+    def _init_editor_preview_splitter(self):
+        """Initializes the Markdown editor, preview pane, and the QSplitter that manages them."""
         self.editor = MarkdownEditor()
         self.preview = MarkdownPreview()
-        self.editor.textChanged.connect(self.update_preview)
+        self.editor.textChanged.connect(self.update_preview) # Update preview on text change
 
-        # Use QSplitter for resizable panels
-        splitter = QSplitter()
-        splitter.addWidget(library_panel)
-        editor_preview = QWidget()
-        ep_layout = QHBoxLayout()
-        ep_layout.setContentsMargins(0,0,0,0)
-        editor_preview.setLayout(ep_layout)
-        ep_layout.addWidget(self.editor, 2)
-        ep_layout.addWidget(self.preview, 2)
-        splitter.addWidget(editor_preview)
-        splitter.setSizes([210, 950])
+        # The main splitter that divides the library panel from the editor/preview area
+        self.splitter = QSplitter(Qt.Orientation.Horizontal) # Explicitly horizontal
 
-        # Set up central widget and layout
-        central = QWidget()
-        central_layout = QVBoxLayout()
-        central_layout.setContentsMargins(0,0,0,0)
-        central.setLayout(central_layout)
-        self.setCentralWidget(central)
-        central_layout.addWidget(splitter)
+        # Add the library panel (already initialized) to the splitter
+        self.splitter.addWidget(self.library_panel) 
 
-        # AI assistant
-        self.ai = AIMarkdownAssistant()
+        # Create a container widget for the editor and preview (to be split vertically or horizontally)
+        editor_preview_container = QWidget()
+        ep_layout = QHBoxLayout() # Editor and Preview side-by-side
+        ep_layout.setContentsMargins(0, 0, 0, 0)
+        ep_layout.setSpacing(0) # No spacing between editor and preview
+        editor_preview_container.setLayout(ep_layout)
+        
+        ep_layout.addWidget(self.editor, 2) # Editor takes 2/4 of space initially
+        ep_layout.addWidget(self.preview, 2) # Preview takes 2/4 of space initially
+        
+        self.splitter.addWidget(editor_preview_container)
+        self.splitter.setSizes([210, 950]) # Initial sizes for library and editor_preview_container
 
-        # Context menu integration
+        self.ai = AIMarkdownAssistant() # Initialize AI assistant
+
+        # Enable custom context menu for the editor (for AI actions)
         self.editor.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.editor.customContextMenuRequested.connect(self.show_context_menu)
 
-        # AI command bar (multi-line)
-        self.command_bar_widget = QWidget(self)
-        from PyQt6.QtWidgets import QHBoxLayout as QHBoxLayoutWidget
-        self.command_bar_layout = QHBoxLayoutWidget()
+    def _init_command_bar(self):
+        """Initializes the AI command bar at the bottom of the window."""
+        self.command_bar_widget = QWidget(self) # Main container for the command bar
+        # Using QHBoxLayout to place the QTextEdit and QPushButton side-by-side
+        self.command_bar_layout = QHBoxLayout() 
+        self.command_bar_layout.setContentsMargins(2, 2, 2, 2) # Small margins
+        self.command_bar_layout.setSpacing(2) # Small spacing
         self.command_bar_widget.setLayout(self.command_bar_layout)
-        self.command_bar = QTextEdit(self)
+
+        self.command_bar = QTextEdit(self) # Multi-line input for AI commands
         self.command_bar.setPlaceholderText("AI Command (Ctrl+Enter to send)")
-        self.command_bar.setFixedHeight(60)
-        self.command_bar.hide()
+        self.command_bar.setFixedHeight(60) # Fixed height for the command bar input
+        # self.command_bar.hide() # Initially hidden, shown by action/shortcut
+
         self.send_button = QPushButton("Send", self)
         self.send_button.clicked.connect(self.execute_command)
+        
         self.command_bar_layout.addWidget(self.command_bar)
         self.command_bar_layout.addWidget(self.send_button)
-        self.command_bar_widget.hide()
-        # Add AI command bar to the central layout after splitter
-        self.centralWidget().layout().addWidget(self.command_bar_widget)
-        self.command_shortcut = QAction(self)
+        self.command_bar_widget.hide() # Hide the whole widget initially
+
+        # Shortcut to show/focus the command bar
+        self.command_shortcut = QAction("AI Command Bar Shortcut", self) # Name for the action
         self.command_shortcut.setShortcut(QKeySequence("Ctrl+Shift+Space"))
         self.command_shortcut.triggered.connect(self.show_command_bar)
-        self.addAction(self.command_shortcut)
+        self.addAction(self.command_shortcut) # Add action to the main window
+
+        # Connect key press event for Ctrl+Enter functionality
         self.command_bar.keyPressEvent = self.command_bar_key_press_event
 
-        self.update_preview()
 
     def update_preview(self):
+        """Updates the Markdown preview pane with the current editor content."""
         text = self.editor.toPlainText()
         self.preview.set_markdown(text)
 
-    def open_file(self, file_path=None):
-        if not self.maybe_save_changes():
+    def open_file(self, file_path: str | None = None):
+        """
+        Opens a Markdown file, loading its content into the editor.
+
+        Args:
+            file_path (str | None, optional): The path to the file to open.
+                If None, a file dialog is shown. Defaults to None.
+        """
+        if not self.maybe_save_changes(): # Check for unsaved changes
             return
-        if not file_path:
-            file_path, _ = QFileDialog.getOpenFileName(self, "Open Markdown File", "docs", "Markdown Files (*.md);;All Files (*)")
-        if file_path:
+
+        if not file_path: # If no path provided, show dialog
+            # Start dialog in the default folder, filter for Markdown files
+            file_path, _ = QFileDialog.getOpenFileName(
+                self, "Open Markdown File", self.default_folder, 
+                "Markdown Files (*.md);;All Files (*)"
+            )
+        
+        if file_path: # Proceed if a file path was selected or provided
             try:
-                with open(file_path, 'r', encoding='utf-8') as f:
+                resolved_path = str(Path(file_path).resolve()) # Normalize the path
+                with open(resolved_path, 'r', encoding='utf-8') as f:
                     content = f.read()
+                
                 self.editor.setPlainText(content)
-                self.current_file = file_path
-                self.last_saved_text = content
-                self.setWindowTitle(f"Marknote - {os.path.basename(file_path)}")
-                self.preview.set_markdown(content)
-                self.add_to_recent_files(file_path)
+                self.current_file = resolved_path
+                self.last_saved_text = content # Update last saved text to current content
+                self.setWindowTitle(f"Marknote - {Path(resolved_path).name}") # Update window title
+                self.preview.set_markdown(content) # Update preview
+                
+                self.recent_files_manager.add_to_recent_files(resolved_path)
+                self.update_recent_files_menu()
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Could not open file: {e}")
 
     def open_folder(self):
-        folder = QFileDialog.getExistingDirectory(self, "Open Folder", str(self.default_folder))
-        if folder:
-            self.default_folder = folder
-            # Persist the new default folder to config.json
+        """Opens a folder, setting it as the new default document library root."""
+        # Start dialog from the current default folder
+        folder_path_str = QFileDialog.getExistingDirectory(self, "Open Folder", str(self.default_folder))
+        if folder_path_str:
+            self.default_folder = str(Path(folder_path_str).resolve()) # Normalize and store
+            
+            # Persist the new default folder to application configuration
             config = load_app_config()
-            config[CONFIG_KEY_DEFAULT_FOLDER] = folder
-            save_app_config(config) # Error message handled by save_app_config
-            self.refresh_library()
+            config[CONFIG_KEY_DEFAULT_FOLDER] = self.default_folder
+            save_app_config(config) # Handles its own error reporting
+            
+            self.refresh_library() # Refresh the file library view
 
-    def open_tree_item(self, item, column):
-        import os
-        path = item.data(0, 1)
-        if os.path.isdir(path):
-            # Toggle expand/collapse
+    def open_tree_item(self, item: QTreeWidgetItem, column: int):
+        """
+        Handles clicks on items in the file library tree.
+        Opens files or expands/collapses folders.
+
+        Args:
+            item (QTreeWidgetItem): The clicked tree item.
+            column (int): The column of the clicked item (usually 0).
+        """
+        path_str = item.data(0, Qt.ItemDataRole.UserRole + 1) # Retrieve path stored in item data
+        if not path_str: return
+
+        path = Path(path_str)
+        if path.is_dir():
+            # Toggle expand/collapse for directories
             if item.isExpanded():
                 self.library.collapseItem(item)
             else:
                 self.library.expandItem(item)
-            # Always clear and set editor to read-only with a message
-            if not self.maybe_save_changes():
-                return
+            
+            # When a folder is clicked, clear editor and show a message
+            if not self.maybe_save_changes(): return # Check unsaved changes
             self.editor.setReadOnly(True)
             self.editor.setPlainText("Select a file to edit or create a new file in this folder.")
-            self.preview.set_markdown("")
+            self.preview.set_markdown("") # Clear preview
             self.current_file = None
-            self.last_saved_text = ""
-        elif path.endswith(".md"):
-            if not self.maybe_save_changes():
-                return
-            self.load_markdown_file(path)
-            self.editor.setReadOnly(False)
+            self.last_saved_text = "" # Reset last saved text
+        elif path.is_file() and path.suffix.lower() == ".md":
+            # If a .md file is clicked, open it
+            self.open_file(str(path)) # open_file handles maybe_save_changes
+            self.editor.setReadOnly(False) # Ensure editor is writable
 
-    def load_markdown_file(self, path):
+    def load_markdown_file(self, path_str: str):
+        """
+        Loads content from a given Markdown file path into the editor.
+        This is a direct load, usually called internally.
+
+        Args:
+            path_str (str): The absolute path to the Markdown file.
+        """
         try:
+            path = Path(path_str).resolve() # Ensure path is absolute and resolved
             with open(path, "r", encoding="utf-8") as f:
                 content = f.read()
-                self.editor.setPlainText(content)
-                self.last_saved_text = content
-                self.current_file = path
-                self.save_last_note(path)
-            self.preview.set_markdown(self.editor.toPlainText())
+            
+            self.editor.setPlainText(content)
+            self.last_saved_text = content
+            self.current_file = str(path)
+            self.setWindowTitle(f"Marknote - {path.name}") # Update window title
+            self.save_last_note(str(path)) # Update last opened note in config
+            self.preview.set_markdown(content) # Update preview
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to open file: {e}")
 
     def save_file(self):
-        text = self.editor.toPlainText()
+        """Saves the current content of the editor to the current_file path."""
+        text_content = self.editor.toPlainText()
         if self.current_file:
             try:
                 with open(self.current_file, "w", encoding="utf-8") as f:
-                    f.write(text)
-                self.last_saved_text = text
-                self.setWindowTitle(f"Marknote - {os.path.basename(self.current_file)}")
-                self.add_to_recent_files(self.current_file)
+                    f.write(text_content)
+                self.last_saved_text = text_content # Update last saved state
+                self.setWindowTitle(f"Marknote - {Path(self.current_file).name}") # Ensure title is correct
+                
+                self.recent_files_manager.add_to_recent_files(self.current_file)
+                self.update_recent_files_menu()
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Failed to save file: {e}")
         else:
+            # If no current file, trigger "Save As" dialog
             self.save_file_as()
 
     def save_file_as(self):
-        file_path, _ = QFileDialog.getSaveFileName(self, "Save Markdown File As", "docs", "Markdown Files (*.md);;All Files (*)")
-        if file_path:
-            if not file_path.endswith('.md'):
-                file_path += '.md'
-            self.current_file = file_path
-            self.save_file()
-            # self.add_to_recent_files(file_path) # save_file already does this
+        """Saves the current editor content to a new file, chosen via a dialog."""
+        # Start dialog in default folder, suggest current filename if available
+        suggested_name = Path(self.current_file).name if self.current_file else "untitled.md"
+        default_save_path = str(Path(self.default_folder) / suggested_name)
 
-    def refresh_library(self, filter_text=""):
-        import os
-        from pathlib import Path
-        self.library.clear()
-        base_dir = self.default_folder
-        def add_items(parent, path):
+        file_path_str, _ = QFileDialog.getSaveFileName(
+            self, "Save Markdown File As", default_save_path, 
+            "Markdown Files (*.md);;All Files (*)"
+        )
+        
+        if file_path_str:
+            # Ensure .md extension
+            if not file_path_str.lower().endswith('.md'):
+                file_path_str += '.md'
+            
+            self.current_file = str(Path(file_path_str).resolve()) # Update current file to new path
+            self.save_file() # Call save_file, which will now use the new current_file
+                             # This also handles adding to recent files and updating title.
+
+    def refresh_library(self, filter_text: str = ""):
+        """
+        Refreshes the document library tree view.
+
+        Populates the tree with files and folders from the default_folder,
+        optionally filtering by filter_text.
+
+        Args:
+            filter_text (str, optional): Text to filter items by. Defaults to "".
+        """
+        self.library.clear() # Clear existing items
+        base_path = Path(self.default_folder)
+
+        # Recursive function to add items to the tree
+        def add_items_recursive(parent_widget_item: QTreeWidgetItem, current_dir: Path):
             try:
-                entries = sorted(Path(path).iterdir(), key=lambda x: (not x.is_dir(), x.name.lower()))
+                # Sort entries: folders first, then files, all case-insensitive
+                entries = sorted(
+                    current_dir.iterdir(), 
+                    key=lambda x: (not x.is_dir(), x.name.lower())
+                )
                 for entry in entries:
-                    if entry.is_dir():
-                        folder_item = QTreeWidgetItem([entry.name])
-                        folder_item.setData(0, 1, str(entry))
-                        parent.addChild(folder_item)
-                        add_items(folder_item, entry)
-                    elif entry.suffix.lower() == ".md":
-                        if filter_text.lower() in entry.name.lower():
-                            file_item = QTreeWidgetItem([entry.name])
-                            file_item.setData(0, 1, str(entry))
-                            parent.addChild(file_item)
-            except Exception as e:
-                pass
-        root = QTreeWidgetItem(["docs"])
-        root.setData(0, 1, base_dir)
-        add_items(root, base_dir)
-        self.library.addTopLevelItem(root)
-        self.library.expandAll()
+                    # Apply filter only to file names, not directories
+                    if entry.is_file() and filter_text.lower() not in entry.name.lower():
+                        continue
 
-    def filter_library(self, text):
+                    item = QTreeWidgetItem([entry.name])
+                    item.setData(0, Qt.ItemDataRole.UserRole + 1, str(entry.resolve())) # Store full path
+                    
+                    # Set icon based on type (optional, requires QIcon setup)
+                    # if entry.is_dir():
+                    #     item.setIcon(0, QIcon.style().standardIcon(QStyle.SP_DirIcon))
+                    # else:
+                    #     item.setIcon(0, QIcon.style().standardIcon(QStyle.SP_FileIcon))
+
+                    parent_widget_item.addChild(item)
+                    if entry.is_dir():
+                        add_items_recursive(item, entry) # Recurse for subdirectories
+            except Exception as e:
+                # Log or display error if a directory can't be accessed
+                print(f"Error reading directory {current_dir}: {e}")
+        
+        # Create a root item for the library (e.g., "Documents" or base_path.name)
+        # Using a simple name for the root node for cleaner display
+        display_root_name = base_path.name if base_path.name else str(base_path)
+        root_tree_item = QTreeWidgetItem([display_root_name])
+        root_tree_item.setData(0, Qt.ItemDataRole.UserRole + 1, str(base_path.resolve()))
+        # root_tree_item.setIcon(0, QIcon.style().standardIcon(QStyle.SP_DriveHDIcon)) # Example icon
+
+        add_items_recursive(root_tree_item, base_path)
+        self.library.addTopLevelItem(root_tree_item)
+        self.library.expandAll() # Expand all items by default
+
+    def filter_library(self, text: str):
+        """
+        Filters the document library based on the provided text.
+        Called when the search bar text changes.
+
+        Args:
+            text (str): The text to filter by.
+        """
         self.refresh_library(filter_text=text)
 
     def create_folder(self):
-        import os
-        if not self.maybe_save_changes():
-            return
+        """Creates a new folder in the current default_folder after prompting for a name."""
+        if not self.maybe_save_changes(): return
+
         folder_name, ok = QInputDialog.getText(self, "Create Folder", "Folder name:")
         if ok and folder_name.strip():
-            base_dir = self.default_folder
-            new_folder_path = os.path.join(base_dir, folder_name.strip())
             try:
-                os.makedirs(new_folder_path, exist_ok=True)
-                # Create a default.md file in the new folder
-                default_file_path = os.path.join(new_folder_path, "default.md")
-                with open(default_file_path, 'w', encoding='utf-8') as f:
-                    f.write("")
-                self.refresh_library(self.search_bar.text())
-                self.load_markdown_file(default_file_path)
+                new_folder_path = Path(self.default_folder) / folder_name.strip()
+                new_folder_path.mkdir(parents=True, exist_ok=True) # Create folder
+                
+                # Create a default "untitled.md" or "readme.md" in the new folder
+                # This provides an immediate file to select/edit.
+                default_md_path = new_folder_path / "untitled.md" 
+                with open(default_md_path, 'w', encoding='utf-8') as f:
+                    f.write(f"# {folder_name.strip()}\n\n") # Basic content
+                
+                self.refresh_library(self.search_bar.text()) # Refresh to show new folder
+                self.load_markdown_file(str(default_md_path)) # Open the new default file
                 self.editor.setReadOnly(False)
             except Exception as e:
-                QMessageBox.critical(self, "Error", f"Failed to create folder: {e}")
+                QMessageBox.critical(self, "Error", f"Failed to create folder or default file: {e}")
 
     def new_file(self):
+        """Creates a new, empty file in the editor."""
         if self.maybe_save_changes():
             self.editor.clear()
-            self.current_file = None
-            self.last_saved_text = ""
+            self.current_file = None # No associated file path yet
+            self.last_saved_text = "" # Treat as unsaved
             self.setWindowTitle("Marknote - Untitled")
             self.preview.set_markdown("")
-            # Do not add None or "Untitled" to recent files here
+            # Do not add to recent files until saved with a name and path.
 
-    def maybe_save_changes(self):
+    def maybe_save_changes(self) -> bool:
         """
-        Returns True to continue, False to abort navigation or close.
+        Checks for unsaved changes and prompts the user to save if necessary.
+
+        Returns:
+            bool: True if processing should continue (changes saved or no changes), 
+                  False if the operation should be aborted (user cancelled or save failed).
         """
-        if self.editor.isReadOnly():
+        if self.editor.isReadOnly(): # No changes if read-only
             return True
-        text = self.editor.toPlainText()
-        if text != self.last_saved_text:
+        
+        current_text = self.editor.toPlainText()
+        if current_text != self.last_saved_text:
             reply = QMessageBox.question(
                 self, "Unsaved Changes",
                 "You have unsaved changes. Do you want to save them?",
@@ -528,413 +978,560 @@ class MainWindow(QMainWindow):
             )
             if reply == QMessageBox.StandardButton.Yes:
                 self.save_file()
-                # If still unsaved (user canceled in save dialog), abort
+                # Check if save was successful (or if user cancelled save_file_as dialog)
                 if self.editor.toPlainText() != self.last_saved_text:
-                    return False
+                    return False # Save failed or was cancelled
             elif reply == QMessageBox.StandardButton.Cancel:
-                return False
+                return False # User chose to cancel the operation
+            # If reply is No, proceed without saving (changes will be lost)
         return True
 
-    def show_context_menu(self, position):
+    def show_context_menu(self, position: QPoint): # Added type hint
+        """
+        Shows a context menu in the editor with AI-related actions.
+
+        Args:
+            position (QPoint): The position where the context menu was requested.
+        """
         menu = QMenu(self)
+        # AI Actions
         expand_action = menu.addAction("Expand with AI")
         refine_action = menu.addAction("Refine with AI")
-        analyze_action = menu.addAction("Analyze Document")
-        command_action = menu.addAction("AI Command Bar")
-        nlp_command_action = menu.addAction("AI Command (Natural Language)")
+        analyze_action = menu.addAction("Analyze Document with AI")
+        menu.addSeparator()
+        # Command Bar Actions
+        command_bar_action = menu.addAction("Show AI Command Bar")
+        # nlp_command_action = menu.addAction("AI Command (Natural Language)") # This seems redundant if command bar handles NLP
+
+        # Connect actions to methods
         expand_action.triggered.connect(self.expand_selected_text)
         refine_action.triggered.connect(self.refine_selected_text)
         analyze_action.triggered.connect(self.analyze_document)
-        command_action.triggered.connect(self.show_command_bar)
-        nlp_command_action.triggered.connect(self.show_command_bar)
-        menu.exec(self.editor.mapToGlobal(position))
+        command_bar_action.triggered.connect(self.show_command_bar)
+        # nlp_command_action.triggered.connect(self.show_command_bar)
+        
+        menu.exec(self.editor.mapToGlobal(position)) # Show menu at global cursor position
 
-    def show_library_context_menu(self, position):
-        item = self.library.itemAt(position)
-        if not item:
-            return
-        import os
-        path = item.data(0, 1)
+    def show_library_context_menu(self, position: QPoint): # Added type hint
+        """
+        Shows a context menu in the document library for file/folder operations.
+
+        Args:
+            position (QPoint): The position where the context menu was requested.
+        """
+        item = self.library.itemAt(position) # Get the item at the click position
+        if not item: return
+
+        path_str = item.data(0, Qt.ItemDataRole.UserRole + 1)
+        if not path_str: return
+        
+        path = Path(path_str)
         menu = QMenu(self)
-        if os.path.isdir(path):
-            new_file_action = menu.addAction("New File")
+
+        if path.is_dir():
+            new_file_action = menu.addAction("New File in Folder")
             rename_action = menu.addAction("Rename Folder")
-            # Always allow delete action, but warn if not empty
-            import os
-            is_empty = not any(os.scandir(path))
             delete_action = menu.addAction("Delete Folder")
-            new_file_action.triggered.connect(lambda: self.create_file_in_folder(path))
-            delete_action.triggered.connect(lambda: self.delete_file_or_folder(item, path, is_folder=True))
-            rename_action.triggered.connect(lambda: self.rename_file_or_folder(item, path, is_folder=True))
-        else:
+            
+            new_file_action.triggered.connect(lambda: self.create_file_in_folder(str(path)))
+            rename_action.triggered.connect(lambda: self.rename_file_or_folder(item, str(path), is_folder=True))
+            delete_action.triggered.connect(lambda: self.delete_file_or_folder(item, str(path), is_folder=True))
+        else: # It's a file
             rename_action = menu.addAction("Rename File")
             delete_action = menu.addAction("Delete File")
-            rename_action.triggered.connect(lambda: self.rename_file_or_folder(item, path, is_folder=False))
-            delete_action.triggered.connect(lambda: self.delete_file_or_folder(item, path, is_folder=False))
-        menu.exec(self.library.viewport().mapToGlobal(position))
 
-    def rename_file_or_folder(self, item, path, is_folder):
-        import os
-        base_dir = os.path.dirname(path) if not is_folder else os.path.dirname(path.rstrip(os.sep))
-        old_name = os.path.basename(path.rstrip(os.sep)) if is_folder else os.path.basename(path)
-        new_name, ok = QInputDialog.getText(self, "Rename", f"Enter new name for {'folder' if is_folder else 'file'}:", text=old_name)
-        if ok and new_name.strip():
-            new_path = os.path.join(base_dir, new_name.strip())
+            rename_action.triggered.connect(lambda: self.rename_file_or_folder(item, str(path), is_folder=False))
+            delete_action.triggered.connect(lambda: self.delete_file_or_folder(item, str(path), is_folder=False))
+        
+        menu.exec(self.library.viewport().mapToGlobal(position)) # Show at global position
+
+    def rename_file_or_folder(self, item: QTreeWidgetItem, path_str: str, is_folder: bool):
+        """
+        Renames a file or folder.
+
+        Args:
+            item (QTreeWidgetItem): The tree item being renamed (currently unused but good for context).
+            path_str (str): The current path of the file or folder.
+            is_folder (bool): True if renaming a folder, False for a file.
+        """
+        path = Path(path_str)
+        old_name = path.name
+        
+        prompt_text = f"Enter new name for {'folder' if is_folder else 'file'}:"
+        new_name, ok = QInputDialog.getText(self, "Rename", prompt_text, text=old_name)
+        
+        if ok and new_name.strip() and new_name.strip() != old_name:
+            new_path = path.parent / new_name.strip()
+            # For files, ensure .md extension is preserved or added if necessary
+            if not is_folder and path.suffix.lower() == '.md' and not new_path.suffix.lower() == '.md':
+                new_path = new_path.with_suffix('.md')
+
+            if new_path.exists():
+                QMessageBox.warning(self, "Rename Error", f"A file or folder named '{new_name.strip()}' already exists.")
+                return
             try:
-                os.rename(path, new_path)
-                self.refresh_library(self.search_bar.text())
+                path.rename(new_path) # Perform rename operation
+                self.refresh_library(self.search_bar.text()) # Refresh library view
+                # If the currently open file was renamed, update its path
+                if self.current_file == str(path):
+                    self.current_file = str(new_path)
+                    self.setWindowTitle(f"Marknote - {new_path.name}")
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Failed to rename: {e}")
 
-    def create_file_in_folder(self, folder_path):
-        import os
-        if not self.maybe_save_changes():
-            return
-        file_name, ok = QInputDialog.getText(self, "New File", "Enter new file name (with .md extension):")
+    def create_file_in_folder(self, folder_path_str: str):
+        """
+        Creates a new .md file within the specified folder.
+
+        Args:
+            folder_path_str (str): The path to the folder where the file will be created.
+        """
+        if not self.maybe_save_changes(): return
+
+        file_name, ok = QInputDialog.getText(self, "New File", "Enter new file name (e.g., my_note.md):")
         if ok and file_name.strip():
-            if not file_name.strip().endswith('.md'):
+            # Ensure .md extension
+            if not file_name.strip().lower().endswith('.md'):
                 file_name = file_name.strip() + '.md'
-            new_file_path = os.path.join(folder_path, file_name)
-            if os.path.exists(new_file_path):
+            
+            new_file_path = Path(folder_path_str) / file_name
+            if new_file_path.exists():
                 QMessageBox.warning(self, "File Exists", f"A file named '{file_name}' already exists in this folder.")
                 return
+            
             try:
                 with open(new_file_path, 'w', encoding='utf-8') as f:
-                    f.write("")
+                    f.write(f"# {Path(file_name).stem}\n\n") # Initial content
+                
                 self.refresh_library(self.search_bar.text())
-                self.load_markdown_file(new_file_path)
+                self.load_markdown_file(str(new_file_path)) # Open the new file
                 self.editor.setReadOnly(False)
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Failed to create file: {e}")
 
-    def delete_file_or_folder(self, item, path, is_folder):
+    def delete_file_or_folder(self, item: QTreeWidgetItem, path_str: str, is_folder: bool):
+        """
+        Deletes a file or an empty folder.
+
+        Args:
+            item (QTreeWidgetItem): The tree item being deleted.
+            path_str (str): The path of the file or folder.
+            is_folder (bool): True if deleting a folder, False for a file.
+        """
+        path = Path(path_str)
+        type_name = "folder" if is_folder else "file"
+        
         if is_folder:
-            # Always show warning if folder is not empty
-            if any(os.scandir(path)):
-                QMessageBox.warning(
-                    self,
-                    "Cannot Delete Folder",
-                    f"This folder cannot be deleted because it is not empty.\n\nTo delete a folder, first remove all files and subfolders inside it.\n(This is the same as Unix behavior: rmdir only works on empty folders.)"
-                )
-                return
-            msg = f"Are you sure you want to delete this folder?\n{path}"
-        else:
-            msg = f"Are you sure you want to delete this file?\n{path}"
-        reply = QMessageBox.question(self, "Delete", msg, QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+            # Check if folder is empty (excluding system files like .DS_Store)
+            try:
+                if any(entry for entry in path.iterdir() if entry.name not in ['.DS_Store']): # macOS specific
+                    QMessageBox.warning(
+                        self, "Cannot Delete Folder",
+                        f"Folder '{path.name}' is not empty. Please delete its contents first."
+                    )
+                    return
+            except OSError as e:
+                 QMessageBox.warning(self, "Error", f"Could not check folder contents: {e}")
+                 return
+
+        reply = QMessageBox.question(
+            self, "Confirm Delete", 
+            f"Are you sure you want to permanently delete this {type_name}?\n\n{path.name}",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No # Default to No
+        )
+
         if reply == QMessageBox.StandardButton.Yes:
             try:
                 if is_folder:
-                    os.rmdir(path)
+                    path.rmdir() # Remove empty directory
                 else:
-                    os.remove(path)
-                # UX improvement: If the current file is deleted, clear editor/preview
-                if not is_folder and self.current_file == path:
-                    self.editor.clear()
-                    self.preview.set_markdown("")
-                    self.current_file = None
-                    self.last_saved_text = ""
-                elif is_folder and self.current_file and self.current_file.startswith(path + os.sep):
-                    # If current file is inside the deleted folder
-                    self.editor.clear()
-                    self.preview.set_markdown("")
-                    self.current_file = None
-                    self.last_saved_text = ""
+                    path.unlink() # Remove file
+                
+                # If the deleted item was the currently open file or a folder containing it
+                if self.current_file:
+                    current_file_path = Path(self.current_file)
+                    if (not is_folder and current_file_path == path) or \
+                       (is_folder and path in current_file_path.parents):
+                        self.new_file() # Effectively clears the editor and resets state
+
                 self.refresh_library(self.search_bar.text())
             except Exception as e:
-                QMessageBox.critical(self, "Error", f"Failed to delete: {e}")
+                QMessageBox.critical(self, "Error", f"Failed to delete {type_name}: {e}")
 
     def expand_selected_text(self):
-        selected = self.editor.selectedText()
-        if selected:
-            expanded = self.ai.expand_content(selected)
-            self.editor.replaceSelectedText(expanded)
+        """Expands the selected text using the AI assistant."""
+        selected_text = self.editor.selectedText()
+        if selected_text:
+            expanded_content = self.ai.expand_content(selected_text)
+            self.editor.replaceSelectedText(expanded_content) # Replace selection with AI output
 
     def refine_selected_text(self):
-        selected = self.editor.selectedText()
-        if selected:
-            refined = self.ai.refine_writing(selected)
-            self.editor.replaceSelectedText(refined)
+        """Refines the selected text for clarity and conciseness using the AI assistant."""
+        selected_text = self.editor.selectedText()
+        if selected_text:
+            refined_content = self.ai.refine_writing(selected_text)
+            self.editor.replaceSelectedText(refined_content)
 
     def analyze_document(self):
-        text = self.editor.text()
-        analysis = self.ai.analyze_document(text)
-        QMessageBox.information(self, "AI Document Analysis", analysis)
+        """Analyzes the entire document content using the AI assistant and shows results."""
+        full_text = self.editor.toPlainText()
+        if not full_text.strip():
+            QMessageBox.information(self, "AI Document Analysis", "The document is empty.")
+            return
+        analysis_results = self.ai.analyze_document(full_text)
+        QMessageBox.information(self, "AI Document Analysis", analysis_results)
 
     def show_command_bar(self):
-        self.command_bar_widget.show()
-        self.command_bar.show()
-        self.command_bar.setFocus()
+        """Shows the AI command bar and sets focus to it."""
+        if self.command_bar_widget.isHidden():
+            self.command_bar_widget.show()
+            self.command_bar.setFocus() # Set focus to the input field
+        else:
+            self.command_bar_widget.hide()
+
 
     def execute_command(self):
-        command = self.command_bar.toPlainText()
-        self.command_bar.clear()
-        self.command_bar_widget.hide()
-        selected = self.editor.selectedText()
-        result = self.ai.process_natural_command(command, selected_text=selected if selected else None)
-        # Always append at the end of the document
-        last_line = self.editor.lines() - 1
-        last_line_text = self.editor.text(last_line)
-        self.editor.setCursorPosition(last_line, len(last_line_text))
-        # Add a newline if not already present
-        if last_line_text.strip() != "":
-            self.editor.insert("\n" + result)
+        """Executes the command entered in the AI command bar."""
+        command_text = self.command_bar.toPlainText().strip()
+        if not command_text: return # Do nothing if command is empty
+
+        self.command_bar.clear() # Clear after getting text
+        self.command_bar_widget.hide() # Hide after execution (optional)
+        
+        selected_text = self.editor.selectedText()
+        # Process command via AI, potentially using selected text as context
+        ai_result = self.ai.process_natural_command(command_text, selected_text=selected_text if selected_text else None)
+        
+        # Insert the AI result at the end of the document or replace selection if any
+        if selected_text:
+            self.editor.replaceSelectedText(ai_result)
         else:
-            self.editor.insert(result)
+            # Append at the end of the document, ensuring a newline if needed
+            current_doc_text = self.editor.toPlainText()
+            if current_doc_text and not current_doc_text.endswith("\n\n"):
+                self.editor.appendText("\n\n" if not current_doc_text.endswith("\n") else "\n")
+            self.editor.appendText(ai_result)
+
 
     def update_recent_files_menu(self):
+        """Updates the 'Open Recent' menu with the list from RecentFilesManager."""
         self.recent_files_menu.clear()
-        if not hasattr(self, 'recent_files_list') or not self.recent_files_list:
+        if not self.recent_files_manager.recent_files_list:
             no_recent_action = QAction("(No recent files)", self)
             no_recent_action.setEnabled(False)
             self.recent_files_menu.addAction(no_recent_action)
             return
 
-        for file_path in self.recent_files_list:
-            action = QAction(os.path.basename(file_path), self)
-            action.setData(file_path)
+        for file_path_str in self.recent_files_manager.recent_files_list:
+            path = Path(file_path_str)
+            # Display only the filename in the menu
+            action = QAction(path.name, self) 
+            action.setData(str(path)) # Store full path in action's data
             action.triggered.connect(self.open_recent_file_action)
             self.recent_files_menu.addAction(action)
 
     def open_recent_file_action(self):
-        action = self.sender()
-        if action:
-            file_path = action.data()
-            if file_path:
-                self.open_file(file_path)
-
-    MAX_RECENT_FILES = 10
-    RECENT_FILES_PATH = Path.home() / '.marknote_recent_files.json'
-
-    def load_recent_files(self):
-        if self.RECENT_FILES_PATH.exists():
-            try:
-                with open(self.RECENT_FILES_PATH, 'r') as f:
-                    self.recent_files_list = json.load(f)
-            except (IOError, json.JSONDecodeError):
-                self.recent_files_list = []
-        else:
-            self.recent_files_list = []
-        self.update_recent_files_menu()
-
-    def save_recent_files(self):
-        try:
-            with open(self.RECENT_FILES_PATH, 'w') as f:
-                json.dump(self.recent_files_list, f)
-        except IOError:
-            # Handle error (e.g., log it) if necessary
-            pass
-
-    def add_to_recent_files(self, file_path):
-        if not file_path: # Do not add None or empty paths
-            return
-        if file_path in self.recent_files_list:
-            self.recent_files_list.remove(file_path)
-        self.recent_files_list.insert(0, file_path)
-        self.recent_files_list = self.recent_files_list[:self.MAX_RECENT_FILES]
-        self.save_recent_files()
-        self.update_recent_files_menu()
+        """Action triggered when a recent file is selected from the menu."""
+        action = self.sender() # Get the action that triggered the signal
+        if isinstance(action, QAction): # Type check
+            file_path_str = action.data()
+            if file_path_str:
+                self.open_file(file_path_str) # Call open_file with the stored path
 
     def export_file_as(self):
-        if not self.editor.toPlainText():
+        """Exports the current document as HTML or Plain Text."""
+        if not self.editor.toPlainText().strip():
             QMessageBox.information(self, "Export As", "There is no content to export.")
             return
 
-        file_path, selected_filter = QFileDialog.getSaveFileName(
-            self,
-            "Export File As",
-            self.default_folder, # Or derive a filename from current_file
+        # Suggest a filename based on the current file or "untitled"
+        base_filename = Path(self.current_file).stem if self.current_file else "untitled"
+        suggested_path = Path(self.default_folder) / base_filename
+
+        file_path_str, selected_filter = QFileDialog.getSaveFileName(
+            self, "Export File As", str(suggested_path),
             "HTML Document (*.html);;Plain Text (*.txt)"
         )
 
-        if not file_path:
-            return # User cancelled
+        if not file_path_str: return # User cancelled
 
+        path_to_save = Path(file_path_str)
         content_to_save = ""
         current_markdown_text = self.editor.toPlainText()
 
         try:
-            if selected_filter == "HTML Document (*.html)":
-                if not file_path.lower().endswith('.html'):
-                    file_path += '.html'
-                # Basic HTML conversion, similar to preview but without live mermaid script
-                # For a standalone HTML, we might want to embed styles or provide a full HTML structure
+            if "(*.html)" in selected_filter:
+                # Ensure .html extension
+                if path_to_save.suffix.lower() != ".html":
+                    path_to_save = path_to_save.with_suffix(".html")
+                
+                # Convert Markdown to HTML (basic conversion, similar to preview)
                 html_content = markdown.markdown(current_markdown_text, extensions=['fenced_code'])
-                # Simple HTML wrapper
+                # Simple HTML wrapper with basic styling
                 content_to_save = f"""<!DOCTYPE html>
-<html lang=\"en\">
+<html lang="en">
 <head>
-    <meta charset=\"UTF-8\">
-    <title>Exported Markdown</title>
+    <meta charset="UTF-8">
+    <title>Exported: {Path(self.current_file).name if self.current_file else "Untitled"}</title>
     <style>
-        body {{ font-family: sans-serif; margin: 20px; line-height: 1.6; }}
-        code {{ background-color: #f4f4f4; padding: 2px 4px; border-radius: 3px; }}
-        pre {{ background-color: #f4f4f4; padding: 10px; border-radius: 3px; overflow-x: auto; }}
+        body {{ font-family: sans-serif; margin: 20px; line-height: 1.6; 
+                background-color: #fdfdfd; color: #333; }}
+        code {{ background-color: #f0f0f0; padding: 2px 4px; border-radius: 3px; 
+                font-family: monospace; }}
+        pre {{ background-color: #f0f0f0; padding: 10px; border-radius: 3px; 
+               overflow-x: auto; white-space: pre-wrap; }}
+        /* Add other styles as needed, e.g., for blockquotes, tables */
     </style>
 </head>
 <body>
 {html_content}
 </body>
 </html>"""
-            elif selected_filter == "Plain Text (*.txt)":
-                if not file_path.lower().endswith('.txt'):
-                    file_path += '.txt'
+            elif "(*.txt)" in selected_filter:
+                # Ensure .txt extension
+                if path_to_save.suffix.lower() != ".txt":
+                    path_to_save = path_to_save.with_suffix(".txt")
                 content_to_save = current_markdown_text
             else:
-                # Should not happen if filters are set correctly
                 QMessageBox.warning(self, "Export Error", "Invalid file type selected.")
                 return
 
-            with open(file_path, 'w', encoding='utf-8') as f:
+            with open(path_to_save, 'w', encoding='utf-8') as f:
                 f.write(content_to_save)
-            QMessageBox.information(self, "Export Successful", f"File exported successfully to {file_path}")
+            QMessageBox.information(self, "Export Successful", f"File exported successfully to {path_to_save}")
 
         except Exception as e:
             QMessageBox.critical(self, "Export Error", f"Could not export file: {e}")
 
     def close_application(self):
-        self.close() # This will trigger the closeEvent
+        """Closes the application, triggering the closeEvent."""
+        self.close() 
 
     def show_syntax_help(self):
+        """Displays a QMessageBox with Markdown and Mermaid syntax help."""
         help_text = (
             "<b>Markdown Syntax:</b><br>"
             "<ul>"
-            "<li><b>Bold:</b> <code>**bold text**</code></li>"
-            "<li><b>Italic:</b> <code>*italic text*</code></li>"
-            "<li><b>Heading:</b> <code># Heading 1</code>, <code>## Heading 2</code></li>"
-            "<li><b>List:</b> <code>- Item</code></li>"
+            "<li><b>Bold:</b> <code>**bold text**</code> or <code>__bold text__</code></li>"
+            "<li><b>Italic:</b> <code>*italic text*</code> or <code>_italic text_</code></li>"
+            "<li><b>Heading:</b> <code># H1</code>, <code>## H2</code>, <code>### H3</code></li>"
+            "<li><b>Unordered List:</b> <code>- Item 1</code><br><code>  - Subitem</code></li>"
+            "<li><b>Ordered List:</b> <code>1. Item 1</code><br><code>   1. Subitem</code></li>"
             "<li><b>Link:</b> <code>[Link Text](https://example.com)</code></li>"
-            "<li><b>Image:</b> <code>![Alt Text](image.png)</code></li>"
-            "<li><b>Code:</b> <code>`inline code`</code> or <code>```python\ncode block\n```</code></li>"
+            "<li><b>Image:</b> <code>![Alt Text](image_url_or_path.png)</code></li>"
+            "<li><b>Inline Code:</b> <code>`code here`</code></li>"
+            "<li><b>Code Block:</b><br><pre>```python\nprint('Hello')\n```</pre></li>"
+            "<li><b>Blockquote:</b> <code>> Quoted text</code></li>"
+            "<li><b>Horizontal Rule:</b> <code>---</code> or <code>***</code></li>"
             "</ul>"
-            "<b>Mermaid Diagram:</b><br>"
-            "<pre>```mermaid\ngraph TD\n  A[Start] --> B{Is it working?}\n  B -- Yes --> C[Great!]\n  B -- No --> D[Fix it]\n```</pre>"
-            "<br>See <a href='https://mermaid-js.github.io/mermaid/#/'>Mermaid docs</a> for more.</br>"
+            "<b>Mermaid Diagram Syntax:</b><br>"
+            "Enclose Mermaid syntax in a code block marked with `mermaid`:"
+            "<pre>```mermaid\ngraph TD\n  A[Start] --> B{Decision}\n  B -- Yes --> C[End]\n  B -- No --> D[Alternative]\n```</pre>"
+            "For more details, see the <a href='https://mermaid.js.org/intro/'>official Mermaid documentation</a>."
         )
-        QMessageBox.information(self, "Markdown & Mermaid Syntax", help_text)
+        # Use QMessageBox.about for rich text display
+        QMessageBox.about(self, "Markdown & Mermaid Syntax Guide", help_text)
 
-    def _normalize_path(self, path):
-        # On Linux, ignore Windows drive-letter paths or backslashes
-        if sys.platform != "win32":
-            if path and ("\\" in path or (len(path) > 2 and path[1] == ':' and path[2] in ['\\', '/'])):
-                # Path is Windows-style, ignore/reset
-                return str(Path.home() / 'Documents' / 'Marknote')
-        # Normalize path for current OS
-        return os.path.abspath(os.path.normpath(path)) if path else str(Path.home() / 'Documents' / 'Marknote')
 
-    def get_or_create_default_folder(self):
+    def _normalize_path(self, path_str: str | None) -> str:
+        """
+        Normalizes a path string using pathlib for robustness and platform-independence.
+        If the path is None or empty, returns a default path.
+
+        Args:
+            path_str (str | None): The path string to normalize.
+
+        Returns:
+            str: The normalized, absolute path string.
+        """
+        # Define a sensible default path, e.g., in user's Documents
+        default_path = Path.home() / 'Documents' / 'Marknote'
+        
+        if not path_str: # Handles None or empty string
+            return str(default_path.resolve()) # Ensure default is also resolved
+        
+        try:
+            # Expand user directory (e.g., ~) and resolve to an absolute, canonical path
+            # This also handles normalization of separators (e.g., / vs \) and . or .. components.
+            normalized_path = Path(path_str).expanduser().resolve()
+            return str(normalized_path)
+        except RuntimeError: 
+            # Path resolution can fail on some systems for certain invalid paths
+            # Example: Path("CON").resolve() on Windows.
+            # Fallback to default path in such rare cases.
+            return str(default_path.resolve())
+        except Exception: 
+            # Catch any other unexpected errors during path normalization.
+            # This is a safeguard; specific errors should be rare with Path.resolve().
+            return str(default_path.resolve())
+
+
+    def get_or_create_default_folder(self) -> str:
+        """
+        Determines the default folder for storing notes.
+        
+        It tries to load from config, validates it, and if not found or invalid,
+        prompts the user to choose or create one.
+
+        Returns:
+            str: The absolute path to the determined default folder.
+        """
         config = load_app_config()
-        default_folder_str = config.get(CONFIG_KEY_DEFAULT_FOLDER)
-        default_folder_str = self._normalize_path(default_folder_str) # Normalize once after getting from config
-
-        if default_folder_str: # Check if a path was retrieved and normalized
-            folder_path = Path(default_folder_str)
+        config_default_folder_str = config.get(CONFIG_KEY_DEFAULT_FOLDER)
+        
+        if config_default_folder_str:
+            normalized_path_from_config = Path(self._normalize_path(config_default_folder_str))
             try:
-                folder_path.mkdir(parents=True, exist_ok=True)
-                if not folder_path.is_dir(): # Ensure it's a directory after attempting creation
-                    # This case means path exists but isn't a dir, or mkdir failed to make it a dir
-                    raise OSError(f"Path '{folder_path}' is not a valid directory.")
+                # Attempt to create the folder (and any necessary parents)
+                # exist_ok=True means it won't raise an error if the directory already exists.
+                normalized_path_from_config.mkdir(parents=True, exist_ok=True)
                 
-                # If the path from config is valid and now exists as a directory, update config if necessary and return
-                if config.get(CONFIG_KEY_DEFAULT_FOLDER) != str(folder_path):
-                    config[CONFIG_KEY_DEFAULT_FOLDER] = str(folder_path)
-                    save_app_config(config) # Error message handled by save_app_config
-                return str(folder_path)
+                if normalized_path_from_config.is_dir(): # Check if it's actually a directory
+                    # If normalization changed the path string, update the config
+                    if str(normalized_path_from_config) != config_default_folder_str:
+                        config[CONFIG_KEY_DEFAULT_FOLDER] = str(normalized_path_from_config)
+                        save_app_config(config)
+                    return str(normalized_path_from_config)
+                else:
+                    # This case occurs if the path exists but is not a directory,
+                    # or if mkdir somehow failed silently to make it a directory.
+                    raise OSError(f"Path '{normalized_path_from_config}' exists but is not a valid directory.")
             except OSError as e:
+                # Show a warning if the configured path is problematic
                 QMessageBox.warning(self, "Default Folder Error",
-                                    f"The configured default folder '{folder_path}' could not be used or created:\n{e}\nPlease choose a new default folder.")
-                # Force prompt by falling through as if no default_folder_str was set
-                default_folder_str = None 
+                                    f"The configured default folder '{normalized_path_from_config}' "
+                                    f"could not be used or created:\n{e}\n"
+                                    "A new default folder will be set up.")
+        
+        # If no valid path from config (initially missing, or failed validation), prompt user
+        return self._prompt_and_set_new_default_folder(config)
 
-        # If no valid default_folder_str from config (either initially or after error)
+    def _prompt_and_set_new_default_folder(self, config: dict) -> str:
+        """
+        Prompts the user to select or create a default folder, then saves it to the configuration.
+        This method is called when the initial default folder setup fails or is missing.
+
+        Args:
+            config (dict): The application configuration dictionary.
+
+        Returns:
+            str: The absolute path to the newly set default folder.
+        """
         user_choice = QMessageBox.question(
             self, "Default Folder Setup",
-            "No default folder is set or the previous one was invalid.\n"
-            "Would you like to use the system default (~/Documents/Marknote)?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+            "No default folder is set, or the previous one was invalid.\n\n"
+            "Would you like to use the system default '~/Documents/Marknote'?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes # Default to Yes
         )
 
+        chosen_path_str: str
         if user_choice == QMessageBox.StandardButton.Yes:
-            chosen_folder_str = str(Path.home() / 'Documents' / 'Marknote')
+            chosen_path_str = str(Path.home() / 'Documents' / 'Marknote')
         else:
-            dialog_path = QFileDialog.getExistingDirectory(self, "Select Default Folder for Marknote")
+            # Allow user to select an existing directory
+            dialog_path = QFileDialog.getExistingDirectory(
+                self, "Select Default Folder for Marknote", str(Path.home())
+            )
             if dialog_path:
-                chosen_folder_str = dialog_path
-            else:
-                chosen_folder_str = str(Path.home() / 'Documents' / 'Marknote')
-                QMessageBox.information(self, "Default Folder", 
-                                        f"No folder selected. Using system default: {chosen_folder_str}")
+                chosen_path_str = dialog_path
+            else: # User cancelled the dialog
+                chosen_path_str = str(Path.home() / 'Documents' / 'Marknote')
+                QMessageBox.information(self, "Default Folder Set", 
+                                        f"No folder selected. Using system default: {chosen_path_str}")
         
-        final_default_folder_str = self._normalize_path(chosen_folder_str)
-        final_folder_path = Path(final_default_folder_str)
+        final_chosen_path = Path(self._normalize_path(chosen_path_str))
 
         try:
-            final_folder_path.mkdir(parents=True, exist_ok=True)
-            if not final_folder_path.is_dir():
-                raise OSError(f"Chosen path '{final_folder_path}' could not be established as a directory.")
+            final_chosen_path.mkdir(parents=True, exist_ok=True)
+            if not final_chosen_path.is_dir():
+                raise OSError(f"Chosen path '{final_chosen_path}' could not be established as a directory.")
             
-            config[CONFIG_KEY_DEFAULT_FOLDER] = str(final_folder_path)
+            config[CONFIG_KEY_DEFAULT_FOLDER] = str(final_chosen_path)
             if not save_app_config(config):
-                QMessageBox.warning(self, "Configuration Save Error", 
-                                    "The chosen default folder was created, but could not be saved to the configuration file.")
-            return str(final_folder_path)
+                # save_app_config should show its own error, but we can log here too.
+                print(f"Warning: Failed to save new default folder {final_chosen_path} to config.")
+            return str(final_chosen_path)
         except OSError as e:
+            # Critical error if the chosen/default path cannot be created
             QMessageBox.critical(self, "Fatal Default Folder Error",
-                                 f"Could not create the chosen default folder '{final_folder_path}':\n{e}\n"
+                                 f"Could not create or use the chosen default folder '{final_chosen_path}':\n{e}\n"
                                  "Marknote will use a temporary fallback in your home directory.")
-            # Fallback to a temporary, likely writable path
-            fallback_path_str = str(Path.home() / "Marknote_Temp_Default")
+            
+            # Fallback to a temporary directory in user's home
+            fallback_path = Path.home() / "Marknote_Temp_Default"
             try:
-                Path(fallback_path_str).mkdir(parents=True, exist_ok=True)
-                return fallback_path_str
+                fallback_path.mkdir(parents=True, exist_ok=True)
+                QMessageBox.information(self, "Using Fallback Folder", 
+                                        f"Marknote is using a temporary folder: {fallback_path}")
+                return str(fallback_path)
             except Exception as fallback_e:
-                # Ultimate fallback if even temp creation fails
-                QMessageBox.critical(self, "Critical Error", f"Failed to create even a temporary fallback folder: {fallback_e}")
-                return str(Path.home()) # Last resort
+                # If even the temporary fallback fails, use user's home as an absolute last resort
+                QMessageBox.critical(self, "Critical Error", 
+                                     f"Failed to create even a temporary fallback folder: {fallback_e}\n"
+                                     f"Marknote will use your home directory: {str(Path.home())}")
+                return str(Path.home())
 
-    def save_last_note(self, path: str):
+    def save_last_note(self, path_str: str):
+        """
+        Saves the path of the last opened note to the application configuration.
+
+        Args:
+            path_str (str): The path to the last opened note.
+        """
         config = load_app_config()
-        normalized_path = self._normalize_path(path)
-        if normalized_path: # Ensure path is not None or empty after normalization
+        # Normalize the path before saving to ensure consistency
+        normalized_path = self._normalize_path(path_str)
+        
+        if normalized_path and Path(normalized_path).is_file(): # Ensure it's a valid file path
             config[CONFIG_KEY_LAST_NOTE] = normalized_path
-            save_app_config(config) # save_app_config handles its own error messages
+            save_app_config(config) 
         else:
-            # This case might occur if path is None or becomes empty after normalization
-            # Depending on desired behavior, one might remove the key or log a warning
+            # If path is invalid or becomes empty after normalization, remove from config
             if CONFIG_KEY_LAST_NOTE in config:
                 del config[CONFIG_KEY_LAST_NOTE]
                 save_app_config(config)
-            print(f"Warning: Attempted to save an invalid or empty path for last note: {path}")
+            print(f"Warning: Attempted to save an invalid path for last note: {path_str}")
 
     def load_last_note(self):
+        """Loads the last opened note if its path is stored in the configuration."""
         config = load_app_config()
         last_note_path_str = config.get(CONFIG_KEY_LAST_NOTE)
 
         if last_note_path_str:
+            # Normalize path from config before attempting to load
             normalized_path_str = self._normalize_path(last_note_path_str)
-            if normalized_path_str:
+            if normalized_path_str: # Check if path is still valid after normalization
                 last_note_path = Path(normalized_path_str)
-                if last_note_path.exists() and last_note_path.is_file() and last_note_path.suffix.lower() == '.md':
+                # Check if the file exists, is a file, and is a Markdown file
+                if last_note_path.exists() and last_note_path.is_file() and \
+                   last_note_path.suffix.lower() == '.md':
                     self.load_markdown_file(str(last_note_path))
-                # else:
+                else:
                     # Optional: If the last note path is invalid/missing, clear it from config
-                    # if CONFIG_KEY_LAST_NOTE in config:
-                    #     del config[CONFIG_KEY_LAST_NOTE]
-                    #     save_app_config(config)
-                    #     print(f"Info: Last note '{normalized_path_str}' not found or invalid. Cleared from config.")
-    def print_file(self):
-        # Placeholder: Implement printing functionality
-        QMessageBox.information(self, "Print", "Print functionality not yet implemented.")
+                    # This prevents repeated attempts to load a non-existent file.
+                    if CONFIG_KEY_LAST_NOTE in config:
+                        del config[CONFIG_KEY_LAST_NOTE]
+                        save_app_config(config)
+                        print(f"Info: Last note '{normalized_path_str}' not found or invalid. Cleared from config.")
 
     def insert_link(self):
-        # Insert a Markdown link template at the cursor
-        cursor = self.editor.SendScintilla
-        pos = self.editor.SendScintilla(self.editor.SCI_GETCURRENTPOS)
+        """Inserts a Markdown link template at the current cursor position in the editor."""
+        # Scintilla command to get current cursor position
+        # pos = self.editor.SendScintilla(self.editor.SCI_GETCURRENTPOS)
+        
         template = "[Link Text](https://example.com)"
-        self.editor.insert(template)
-        # Optionally, move cursor between brackets
+        self.editor.insert(template) # Insert the template text
+        
+        # Optionally, move cursor to select "Link Text" or place it inside the URL parentheses
+        # current_pos = self.editor.SendScintilla(self.editor.SCI_GETCURRENTPOS)
+        # self.editor.SendScintilla(self.editor.SCI_SETSEL, current_pos - len(template) + 1, current_pos - len(template) + 1 + len("Link Text"))
+
 
 if __name__ == "__main__":
+    # Standard PyQt application setup
     app = QApplication(sys.argv)
     window = MainWindow()
-    window.show()
-    sys.exit(app.exec())
+    window.show() # Display the main window
+    sys.exit(app.exec()) # Start the Qt event loop
