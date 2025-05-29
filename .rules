@@ -1,0 +1,11 @@
+Always check the plan.md file for the roadmap and the current state of the project.
+Always check the .gitignore file for the files that should not be committed.
+Always check the requirements.txt file for the dependencies.    
+Always check the config.example.json file for the configuration.    
+Always check the main.py file for the main application.    
+Always check the ai.py file for the AI features.    
+Always check the config_utils.py file for the configuration utilities.    
+Always check the markdown_utils.py file for the markdown utilities.    
+Always check the ui_utils.py file for the UI utilities.    
+Always check the utils.py file for the utilities.    
+Always check the markdown_utils.py file for the markdown utilities.    
