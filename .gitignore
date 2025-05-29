@@ -15,6 +15,7 @@ build/
 .pytest_cache/
 .coverage
 *.sqlite3
+.rules
 
 # User-specific files not to share publicly
 docs/plan.md
