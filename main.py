@@ -18,7 +18,7 @@ from config_utils import (
     CONFIG_FILE_NAME, CONFIG_KEY_GEMINI_API_KEY
 )
 
-from PyQt6.QtCore import Qt, QTimer, QEventLoop
+from PyQt6.QtCore import Qt, QTimer, QEventLoop, QEvent, QPoint
 from PyQt6.QtGui import QAction, QColor, QFont, QIcon, QKeySequence, QPalette
 from PyQt6.QtWidgets import (
     QApplication, QFileDialog, QHBoxLayout, QInputDialog, QLineEdit,
