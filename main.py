@@ -11,7 +11,7 @@ from config_utils import (
     CONFIG_FILE_NAME, CONFIG_KEY_GEMINI_API_KEY
 )
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QTimer, QEventLoop
 from PyQt6.QtGui import QAction, QColor, QFont, QIcon, QKeySequence, QPalette
 from PyQt6.QtWidgets import (
     QApplication, QFileDialog, QHBoxLayout, QInputDialog, QLineEdit,
@@ -20,6 +20,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.Qsci import QsciLexerMarkdown, QsciScintilla
 from PyQt6.QtWebEngineWidgets import QWebEngineView
+from PyQt6.QtPrintSupport import QPrinter, QPrintDialog
 
 from ai import AIMarkdownAssistant
 import markdown
@@ -61,6 +62,9 @@ class MarkdownPreview(QWebEngineView):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setStyleSheet("background-color: #21252b; color: #d7dae0; font-family: sans-serif;")
+        # Attempted to enable print support, but PrintSupportEnabled is not a valid WebAttribute.
+        # settings = self.page().settings()
+        # settings.setAttribute(QWebEngineSettings.WebAttribute.PrintSupportEnabled, True) # This line caused AttributeError
 
     def set_markdown(self, text):
         # Detect ```mermaid code blocks in raw Markdown
@@ -138,6 +142,47 @@ class MainWindow(QMainWindow):
         self.load_last_note()
         self.load_recent_files()
 
+    def print_document(self):
+        if not self.preview:
+            QMessageBox.critical(self, "Error", "Preview pane is not available.")
+            return
+
+        printer = QPrinter(QPrinter.PrinterMode.HighResolution)
+        dialog = QPrintDialog(printer, self)
+
+        if dialog.exec() == QPrintDialog.DialogCode.Accepted:
+            loop = QEventLoop()
+            # Connect the printFinished signal to our handler and the loop's quit slot
+            self.preview.printFinished.connect(self._handle_print_finished)
+            self.preview.printFinished.connect(loop.quit)
+            
+            self.preview.print(printer)
+            
+            # Execute the event loop to wait for printing to finish
+            # Exclude user input events to prevent interaction issues during printing
+            loop.exec(QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents)
+            
+            # It's good practice to disconnect signals after use if they are connected in a temporary way
+            try:
+                self.preview.printFinished.disconnect(self._handle_print_finished)
+                self.preview.printFinished.disconnect(loop.quit)
+            except TypeError: # Signal already disconnected or never connected
+                pass 
+        else:
+            print("Print dialog cancelled by user.")
+
+    def _handle_print_finished(self, success: bool):
+        if success:
+            print("Print operation successful.")
+            # QMessageBox.information(self, "Print Status", "Document printed successfully.") # Optional: user feedback
+        else:
+            print("Print operation failed.")
+            QMessageBox.warning(self, "Print Error", "Could not print the document.")
+        
+        # This handler might be called multiple times if connected elsewhere, 
+        # or if the print operation has multiple stages that emit printFinished.
+        # For now, simple print statements are fine.
+
     def command_bar_key_press_event(self, event):
         from PyQt6.QtGui import QKeyEvent
         if event.modifiers() == Qt.KeyboardModifier.ControlModifier and event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
@@ -200,16 +245,17 @@ class MainWindow(QMainWindow):
 
         file_menu.addSeparator()
 
+        print_action = QAction("Print", self)
+        print_action.triggered.connect(self.print_document)
+        print_action.setShortcut(QKeySequence("Ctrl+P"))
+        file_menu.addAction(print_action)
+
+        file_menu.addSeparator()
+
         export_as_action = QAction("Export As...", self)
         export_as_action.triggered.connect(self.export_file_as)
         file_menu.addAction(export_as_action)
 
-        print_action = QAction("Print...", self)
-        print_action.triggered.connect(self.print_file)
-        # You might want to add a shortcut like Ctrl+P here later
-        file_menu.addAction(print_action)
-
-        file_menu.addSeparator()
 
         exit_action = QAction("Exit", self)
         exit_action.triggered.connect(self.close_application) # Or self.close directly
