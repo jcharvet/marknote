@@ -31,6 +31,7 @@ from PyQt6.Qsci import QsciLexerMarkdown, QsciScintilla
 from PyQt6.QtWebEngineWidgets import QWebEngineView # QWebEngineView already imported
 from PyQt6.QtPrintSupport import QPrinter, QPrintDialog
 from PyQt6.QtWebEngineCore import QWebEngineSettings # Added for PDF preview settings
+from PIL import Image
 
 from ai import AIMarkdownAssistant
 import markdown
@@ -489,26 +490,24 @@ class MainWindow(QMainWindow):
         export_as_action.triggered.connect(self.export_file_as)
         file_menu.addAction(export_as_action)
 
-
-        exit_action = QAction("Exit", self)
-        exit_action.triggered.connect(self.close_application) # Or self.close directly
-        file_menu.addAction(exit_action)
-
-        # Other Menu
-        other_menu = menubar.addMenu("Other")
-
+        # Only create 'Other' menu once
+        if not hasattr(self, 'other_menu'):
+            self.other_menu = menubar.addMenu("Other")
+        other_menu = self.other_menu
         link_action = QAction("Link", self)
         link_action.triggered.connect(self.insert_link)
         other_menu.addAction(link_action)
-
         ai_command_action = QAction("AI Command", self)
         ai_command_action.setShortcut(QKeySequence("Ctrl+Shift+Space"))
         ai_command_action.triggered.connect(self.show_command_bar)
         other_menu.addAction(ai_command_action)
+        insert_image_action = QAction("Insert Image...", self)
+        insert_image_action.triggered.connect(self.insert_image)
+        other_menu.addAction(insert_image_action)
 
-        # Help Menu
+        # --- Help Menu ---
         help_menu = menubar.addMenu("Help")
-        syntax_action = QAction("Markdown & Mermaid Syntax", self) # This maps to "Help feature"
+        syntax_action = QAction("Markdown & Mermaid Syntax", self)
         syntax_action.triggered.connect(self.show_syntax_help)
         help_menu.addAction(syntax_action)
 
@@ -567,6 +566,10 @@ class MainWindow(QMainWindow):
         export_as_action = QAction("Export As...", self)
         export_as_action.triggered.connect(self.export_file_as)
         file_menu.addAction(export_as_action)
+
+        insert_image_action = QAction("Insert Image...", self)
+        insert_image_action.triggered.connect(self.insert_image)
+        file_menu.addAction(insert_image_action)
 
         file_menu.addSeparator() # Added separator for consistency
 
@@ -648,6 +651,10 @@ class MainWindow(QMainWindow):
         self._setup_central_widget()
         
         self.update_preview() # Initial preview update
+
+        # Add toolbar button for image insertion
+        if hasattr(self, 'toolbar'):
+            self.toolbar.addAction(QAction(QIcon(), "Insert Image...", self, triggered=self.insert_image))
 
     def _setup_central_widget(self):
         """
@@ -1577,6 +1584,71 @@ class MainWindow(QMainWindow):
         # Optionally, move cursor to select "Link Text" or place it inside the URL parentheses
         # current_pos = self.editor.SendScintilla(self.editor.SCI_GETCURRENTPOS)
         # self.editor.SendScintilla(self.editor.SCI_SETSEL, current_pos - len(template) + 1, current_pos - len(template) + 1 + len("Link Text"))
+
+    def insert_image(self):
+        from PyQt6.QtWidgets import QInputDialog, QFileDialog
+        import shutil, os
+        # Ask user: file or URL?
+        mode, ok = QInputDialog.getItem(self, "Insert Image", "Choose image source:", ["File", "URL"], 0, False)
+        if not ok:
+            return
+        if mode == "File":
+            file_path, _ = QFileDialog.getOpenFileName(self, "Select Image File", "", "Images (*.png *.jpg *.jpeg *.gif *.bmp *.webp)")
+            if not file_path:
+                return
+            # Ask for width/height (optional)
+            width, ok_w = QInputDialog.getInt(self, "Image Width (optional)", "Width (px, 0 for original):", 0, 0)
+            if not ok_w:
+                return
+            height, ok_h = QInputDialog.getInt(self, "Image Height (optional)", "Height (px, 0 for original):", 0, 0)
+            if not ok_h:
+                return
+            # Copy image to images/ folder in note's directory
+            note_dir = os.path.dirname(self.current_file) if self.current_file else os.getcwd()
+            images_dir = os.path.join(note_dir, "images")
+            os.makedirs(images_dir, exist_ok=True)
+            base_name = os.path.basename(file_path)
+            dest_path = os.path.join(images_dir, base_name)
+            # Avoid overwrite
+            i = 1
+            name, ext = os.path.splitext(base_name)
+            while os.path.exists(dest_path):
+                dest_path = os.path.join(images_dir, f"{name}_{i}{ext}")
+                i += 1
+            # Resize if needed
+            if width > 0 or height > 0:
+                img = Image.open(file_path)
+                orig_w, orig_h = img.size
+                new_w = width if width > 0 else orig_w
+                new_h = height if height > 0 else orig_h
+                img = img.resize((new_w, new_h), Image.LANCZOS)
+                img.save(dest_path)
+            else:
+                shutil.copy2(file_path, dest_path)
+            rel_path = os.path.relpath(dest_path, note_dir)
+            # Insert Markdown or HTML
+            if width > 0 or height > 0:
+                html = f'<img src="{rel_path}" width="{width if width > 0 else ''}" height="{height if height > 0 else ''}" />'
+                self.editor.insert(html)
+            else:
+                md = f'![image]({rel_path})'
+                self.editor.insert(md)
+        else:  # URL
+            url, ok = QInputDialog.getText(self, "Insert Image URL", "Image URL:")
+            if not ok or not url:
+                return
+            width, ok_w = QInputDialog.getInt(self, "Image Width (optional)", "Width (px, 0 for original):", 0, 0)
+            if not ok_w:
+                return
+            height, ok_h = QInputDialog.getInt(self, "Image Height (optional)", "Height (px, 0 for original):", 0, 0)
+            if not ok_h:
+                return
+            if width > 0 or height > 0:
+                html = f'<img src="{url}" width="{width if width > 0 else ''}" height="{height if height > 0 else ''}" />'
+                self.editor.insert(html)
+            else:
+                md = f'![image]({url})'
+                self.editor.insert(md)
 
 
 if __name__ == "__main__":
