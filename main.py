@@ -361,8 +361,9 @@ class MainWindow(QMainWindow):
             return
 
         def _handle_pdf_generation(pdf_data: QByteArray):
-            if not pdf_data:
-                QMessageBox.warning(self, "Print Error", "Could not generate PDF for preview.")
+            print(f"[DEBUG] PDF data size: {pdf_data.size()} bytes") # Added for debugging
+            if not pdf_data or pdf_data.isEmpty(): # Check if isEmpty as well
+                QMessageBox.warning(self, "Print Error", "Could not generate PDF for preview (data is empty or invalid).")
                 return
 
             preview_dialog = PrintPreviewDialog(self)
@@ -470,10 +471,6 @@ class MainWindow(QMainWindow):
         # --- File Menu ---
         file_menu = menubar.addMenu("File")
 
-        new_action = QAction("New", self)
-        new_action.triggered.connect(self.new_file)
-        file_menu = menubar.addMenu("File")
-        
         new_action = QAction("New", self)
         new_action.triggered.connect(self.new_file)
         file_menu.addAction(new_action)
