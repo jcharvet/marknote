@@ -18,16 +18,19 @@ from config_utils import (
     CONFIG_FILE_NAME, CONFIG_KEY_GEMINI_API_KEY
 )
 
-from PyQt6.QtCore import Qt, QTimer, QEventLoop, QEvent, QPoint
+import PyQt6.QtCore # For version diagnostics
+import PyQt6.QtWebEngineCore # For version diagnostics
+from PyQt6.QtCore import Qt, QTimer, QEventLoop, QEvent, QPoint, QByteArray, QUrl # Added QByteArray, QUrl
 from PyQt6.QtGui import QAction, QColor, QFont, QIcon, QKeySequence, QPalette
 from PyQt6.QtWidgets import (
     QApplication, QFileDialog, QHBoxLayout, QInputDialog, QLineEdit,
     QMainWindow, QMenu, QMessageBox, QPushButton, QSplitter, QTextEdit,
-    QToolBar, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget
+    QToolBar, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget, QDialog # Added QDialog
 )
 from PyQt6.Qsci import QsciLexerMarkdown, QsciScintilla
-from PyQt6.QtWebEngineWidgets import QWebEngineView
+from PyQt6.QtWebEngineWidgets import QWebEngineView # QWebEngineView already imported
 from PyQt6.QtPrintSupport import QPrinter, QPrintDialog
+from PyQt6.QtWebEngineCore import QWebEngineSettings # Added for PDF preview settings
 
 from ai import AIMarkdownAssistant
 import markdown
@@ -170,10 +173,12 @@ class MarkdownPreview(QWebEngineView):
         """
         super().__init__(parent)
         self.setStyleSheet("background-color: #21252b; color: #d7dae0; font-family: sans-serif;")
+        self.current_html: str = ""
+        self.base_url: QUrl = QUrl()
         # Note: QWebEngineSettings.WebAttribute.PrintSupportEnabled was problematic and removed.
         # Printing is handled via QPrintDialog and page().print() in MainWindow.
 
-    def set_markdown(self, text: str):
+    def set_markdown(self, text: str, base_url: QUrl = None):
         """
         Renders the given Markdown text as HTML in the preview pane.
 
@@ -204,34 +209,93 @@ class MarkdownPreview(QWebEngineView):
             <html>
             <head>
                 <style>
-                    body {{ background: #21252b; color: #d7dae0; font-family: sans-serif; }}
-                    /* Add more styles for code blocks, etc., if needed */
-                    pre {{ background-color: #282c34; padding: 10px; border-radius: 5px; overflow-x: auto; }}
+                    body {{ background: #fff; color: #111; font-family: sans-serif; }}
+                    pre {{ background-color: #f0f0f0; padding: 10px; border-radius: 5px; overflow-x: auto; }}
                     code {{ font-family: "Fira Mono", monospace; }}
                 </style>
                 <script type="module">
-                  // Dynamically import and initialize Mermaid.js
                   import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
-                  mermaid.initialize({{ startOnLoad: true }});
+                  mermaid.initialize({ startOnLoad: true });
                 </script>
             </head>
             <body>{html_body}</body>
             </html>
             '''
         else:
-            # HTML without Mermaid.js if no diagrams detected
             full_html = f'''
             <html>
             <head>
                 <style>
-                    body {{ background: #21252b; color: #d7dae0; font-family: sans-serif; }}
-                    pre {{ background-color: #282c34; padding: 10px; border-radius: 5px; overflow-x: auto; }}
+                    body {{ background: #fff; color: #111; font-family: sans-serif; }}
+                    pre {{ background-color: #f0f0f0; padding: 10px; border-radius: 5px; overflow-x: auto; }}
                     code {{ font-family: "Fira Mono", monospace; }}
                 </style>
             </head>
             <body>{html_body}</body>
             </html>'''
-        self.setHtml(full_html)
+        self.current_html = full_html
+        if base_url:
+            self.base_url = base_url
+        self.setHtml(self.current_html, baseUrl=self.base_url)
+
+class PrintPreviewDialog(QDialog):
+    """
+    A dialog for showing a print preview of a PDF document.
+    """
+    def __init__(self, parent=None):
+        """
+        Initializes the PrintPreviewDialog.
+
+        Args:
+            parent (QWidget, optional): The parent widget. Defaults to None.
+        """
+        super().__init__(parent)
+        self.setWindowTitle("Print Preview")
+        self.setMinimumSize(800, 600)
+        main_layout = QVBoxLayout(self)
+        self.web_view = QWebEngineView()
+        settings = self.web_view.settings()
+        settings.setAttribute(QWebEngineSettings.WebAttribute.PluginsEnabled, True)
+        settings.setAttribute(QWebEngineSettings.WebAttribute.PdfViewerEnabled, True)
+        self.web_view.setStyleSheet("background-color: white;")
+        main_layout.addWidget(self.web_view)
+        button_layout = QHBoxLayout()
+        self.print_button = QPushButton("Print")
+        self.print_button.clicked.connect(self.trigger_web_print)
+        button_layout.addWidget(self.print_button)
+        cancel_button = QPushButton("Cancel")
+        cancel_button.clicked.connect(self.reject)
+        button_layout.addWidget(cancel_button)
+        main_layout.addLayout(button_layout)
+        self.setLayout(main_layout)
+
+    def trigger_web_print(self):
+        import tempfile, os, webbrowser
+        from PyQt6.QtWidgets import QMessageBox
+        
+        def after_html(html_content):
+            # Inject window.print() on load
+            if '</body>' in html_content:
+                html_content = html_content.replace('</body>', '<script>window.onload = function(){window.print();}</script></body>')
+            else:
+                html_content += '<script>window.onload = function(){window.print();}</script>'
+            temp_dir = tempfile.gettempdir()
+            html_path = os.path.join(temp_dir, "marknote_print.html")
+            try:
+                with open(html_path, "w", encoding="utf-8") as f:
+                    f.write(html_content)
+                webbrowser.open(f"file://{html_path}")
+            except Exception as e:
+                QMessageBox.critical(self, "Print Error", f"Failed to open browser for printing: {e}")
+        self.web_view.page().toHtml(after_html)
+
+    def show_preview_html(self, html_content: str, base_url: QUrl):
+        if html_content:
+            self.web_view.setHtml(html_content, baseUrl=base_url)
+            self.print_button.setEnabled(True)
+        else:
+            self.web_view.setHtml("<p>Error: No HTML content to preview.</p>")
+            self.print_button.setEnabled(False)
 
 class MainWindow(QMainWindow):
     """
@@ -307,37 +371,18 @@ class MainWindow(QMainWindow):
         self.update_recent_files_menu() # Populate the "Open Recent" menu
 
     def print_document(self):
-        """Handles printing of the current document via the preview pane."""
+        """Show HTML preview dialog and let user print via browser's print dialog."""
         if not self.preview:
             QMessageBox.critical(self, "Error", "Preview pane is not available.")
             return
-
-        printer = QPrinter(QPrinter.PrinterMode.HighResolution)
-        dialog = QPrintDialog(printer, self)
-
-        if dialog.exec() == QPrintDialog.DialogCode.Accepted:
-            # Use an event loop to wait for the asynchronous print operation to finish
-            # This prevents the application from freezing during printing.
-            loop = QEventLoop()
-            
-            # Connect the printFinished signal to a handler and the loop's quit slot
-            self.preview.page().printFinished.connect(self._handle_print_finished) # Corrected: page().printFinished
-            self.preview.page().printFinished.connect(loop.quit) # Corrected: page().printFinished
-            
-            self.preview.page().print(printer, lambda success: None) # Print the content of the web page
-            
-            # Execute the event loop, excluding user input to prevent interaction issues
-            loop.exec(QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents)
-            
-            # Disconnect signals after use to avoid multiple calls if print_document is called again
-            try:
-                self.preview.page().printFinished.disconnect(self._handle_print_finished) # Corrected
-                self.preview.page().printFinished.disconnect(loop.quit) # Corrected
-            except TypeError: 
-                # This can happen if the signal was already disconnected or never connected properly.
-                pass 
-        else:
-            print("Print dialog cancelled by user.") # Log or inform user
+        html_content = self.preview.current_html
+        base_url = self.preview.base_url
+        if not html_content:
+            QMessageBox.warning(self, "Print Error", "No content to preview or print.")
+            return
+        preview_dialog = PrintPreviewDialog(self)
+        preview_dialog.show_preview_html(html_content, base_url)
+        preview_dialog.exec()
 
     def _handle_print_finished(self, success: bool):
         """
@@ -403,10 +448,6 @@ class MainWindow(QMainWindow):
         # --- File Menu ---
         file_menu = menubar.addMenu("File")
 
-        new_action = QAction("New", self)
-        new_action.triggered.connect(self.new_file)
-        file_menu = menubar.addMenu("File")
-        
         new_action = QAction("New", self)
         new_action.triggered.connect(self.new_file)
         file_menu.addAction(new_action)
@@ -720,7 +761,16 @@ class MainWindow(QMainWindow):
     def update_preview(self):
         """Updates the Markdown preview pane with the current editor content."""
         text = self.editor.toPlainText()
-        self.preview.set_markdown(text)
+        base_url = QUrl()  # Default empty base URL
+        if self.current_file:
+            try:
+                file_path = Path(self.current_file)
+                if file_path.is_file(): # Ensure it's a file and not just a path string
+                    base_url = QUrl.fromLocalFile(str(file_path.parent.resolve()))
+            except Exception as e:
+                print(f"Error determining base_url for {self.current_file}: {e}")
+                # Fallback to default empty base_url
+        self.preview.set_markdown(text, base_url=base_url)
 
     def open_file(self, file_path: str | None = None):
         """
