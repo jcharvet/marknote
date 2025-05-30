@@ -517,6 +517,12 @@ class MainWindow(QMainWindow):
         syntax_action.triggered.connect(self.show_syntax_help)
         help_menu.addAction(syntax_action)
 
+        # Add Exit action at the end
+        file_menu.addSeparator()
+        exit_action = QAction("Exit", self)
+        exit_action.triggered.connect(self.close_application)
+        file_menu.addAction(exit_action)
+
     def init_ui(self):
         # Set dark palette
         palette = QPalette()
@@ -781,15 +787,16 @@ class MainWindow(QMainWindow):
 
     def update_preview(self):
         """Updates the Markdown preview pane with the current editor content."""
+        if not self.current_file or not Path(self.current_file).is_file():
+            self.preview.set_markdown("", base_url=QUrl())
+            return
         text = self.editor.toPlainText()
         base_url = QUrl()
-        if self.current_file:
-            try:
-                file_path = Path(self.current_file)
-                if file_path.is_file():
-                    base_url = QUrl.fromLocalFile(str(file_path.parent.resolve()) + os.sep)
-            except Exception as e:
-                print(f"Error determining base_url for {self.current_file}: {e}")
+        try:
+            file_path = Path(self.current_file)
+            base_url = QUrl.fromLocalFile(str(file_path.parent.resolve()) + os.sep)
+        except Exception as e:
+            print(f"Error determining base_url for {self.current_file}: {e}")
         print(f"DEBUG: Using base_url for preview: {base_url.toString()}")
         self.preview.set_markdown(text, base_url=base_url)
 
@@ -821,7 +828,7 @@ class MainWindow(QMainWindow):
                 self.current_file = resolved_path
                 self.last_saved_text = content # Update last saved text to current content
                 self.setWindowTitle(f"Marknote - {Path(resolved_path).name}") # Update window title
-                self.preview.set_markdown(content) # Update preview
+                self.update_preview() # <-- ensure preview is updated with correct base_url
                 
                 self.recent_files_manager.add_to_recent_files(resolved_path)
                 self.update_recent_files_menu()
@@ -892,7 +899,7 @@ class MainWindow(QMainWindow):
             self.current_file = str(path)
             self.setWindowTitle(f"Marknote - {path.name}") # Update window title
             self.save_last_note(str(path)) # Update last opened note in config
-            self.preview.set_markdown(content) # Update preview
+            self.update_preview() # <-- ensure preview is updated with correct base_url
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to open file: {e}")
 
