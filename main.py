@@ -11,6 +11,8 @@ from pathlib import Path
 import re
 import sys
 import textwrap
+import shutil
+import tempfile
 
 from config_utils import (
     load_app_config, save_app_config,
@@ -31,9 +33,11 @@ from PyQt6.Qsci import QsciLexerMarkdown, QsciScintilla
 from PyQt6.QtWebEngineWidgets import QWebEngineView # QWebEngineView already imported
 from PyQt6.QtPrintSupport import QPrinter, QPrintDialog
 from PyQt6.QtWebEngineCore import QWebEngineSettings # Added for PDF preview settings
+from PIL import Image
 
 from ai import AIMarkdownAssistant
 import markdown
+import requests
 
 class RecentFilesManager:
     """
@@ -199,7 +203,7 @@ class MarkdownPreview(QWebEngineView):
         text_with_mermaid_divs = mermaid_pattern.sub(mermaid_replacer, text)
         
         # Convert Markdown to HTML (including the divs for Mermaid)
-        html_body = markdown.markdown(text_with_mermaid_divs, extensions=['fenced_code'])
+        html_body = markdown.markdown(text_with_mermaid_divs, extensions=['fenced_code', 'extra'])
         
         # Construct the full HTML document
         # Basic dark theme styling is applied via <style>
@@ -236,6 +240,7 @@ class MarkdownPreview(QWebEngineView):
         self.current_html = full_html
         if base_url:
             self.base_url = base_url
+        print(f"DEBUG: setHtml base_url: {self.base_url.toString()}")
         self.setHtml(self.current_html, baseUrl=self.base_url)
 
 class PrintPreviewDialog(QDialog):
@@ -341,6 +346,8 @@ class MainWindow(QMainWindow):
             margin: 4px 0px 4px 0px;
         }
     """)
+
+    failed_image_downloads = set()
 
     def __init__(self):
         """Initializes the MainWindow, setting up UI, loading configurations, and recent files."""
@@ -489,28 +496,32 @@ class MainWindow(QMainWindow):
         export_as_action.triggered.connect(self.export_file_as)
         file_menu.addAction(export_as_action)
 
-
-        exit_action = QAction("Exit", self)
-        exit_action.triggered.connect(self.close_application) # Or self.close directly
-        file_menu.addAction(exit_action)
-
-        # Other Menu
-        other_menu = menubar.addMenu("Other")
-
+        # Only create 'Other' menu once
+        if not hasattr(self, 'other_menu'):
+            self.other_menu = menubar.addMenu("Other")
+        other_menu = self.other_menu
         link_action = QAction("Link", self)
         link_action.triggered.connect(self.insert_link)
         other_menu.addAction(link_action)
-
         ai_command_action = QAction("AI Command", self)
         ai_command_action.setShortcut(QKeySequence("Ctrl+Shift+Space"))
         ai_command_action.triggered.connect(self.show_command_bar)
         other_menu.addAction(ai_command_action)
+        insert_image_action = QAction("Insert Image...", self)
+        insert_image_action.triggered.connect(self.insert_image)
+        other_menu.addAction(insert_image_action)
 
-        # Help Menu
+        # --- Help Menu ---
         help_menu = menubar.addMenu("Help")
-        syntax_action = QAction("Markdown & Mermaid Syntax", self) # This maps to "Help feature"
+        syntax_action = QAction("Markdown & Mermaid Syntax", self)
         syntax_action.triggered.connect(self.show_syntax_help)
         help_menu.addAction(syntax_action)
+
+        # Add Exit action at the end
+        file_menu.addSeparator()
+        exit_action = QAction("Exit", self)
+        exit_action.triggered.connect(self.close_application)
+        file_menu.addAction(exit_action)
 
     def init_ui(self):
         # Set dark palette
@@ -567,6 +578,10 @@ class MainWindow(QMainWindow):
         export_as_action = QAction("Export As...", self)
         export_as_action.triggered.connect(self.export_file_as)
         file_menu.addAction(export_as_action)
+
+        insert_image_action = QAction("Insert Image...", self)
+        insert_image_action.triggered.connect(self.insert_image)
+        file_menu.addAction(insert_image_action)
 
         file_menu.addSeparator() # Added separator for consistency
 
@@ -648,6 +663,18 @@ class MainWindow(QMainWindow):
         self._setup_central_widget()
         
         self.update_preview() # Initial preview update
+
+        # Add toolbar button for image insertion
+        if hasattr(self, 'toolbar'):
+            self.toolbar.addAction(QAction(QIcon(), "Insert Image...", self, triggered=self.insert_image))
+
+        # Override keyPressEvent for Enter/Return
+        orig_keyPressEvent = self.editor.keyPressEvent
+        def custom_keyPressEvent(event):
+            if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+                self.update_preview()
+            orig_keyPressEvent(event)
+        self.editor.keyPressEvent = custom_keyPressEvent
 
     def _setup_central_widget(self):
         """
@@ -760,16 +787,17 @@ class MainWindow(QMainWindow):
 
     def update_preview(self):
         """Updates the Markdown preview pane with the current editor content."""
+        if not self.current_file or not Path(self.current_file).is_file():
+            self.preview.set_markdown("", base_url=QUrl())
+            return
         text = self.editor.toPlainText()
-        base_url = QUrl()  # Default empty base URL
-        if self.current_file:
-            try:
-                file_path = Path(self.current_file)
-                if file_path.is_file(): # Ensure it's a file and not just a path string
-                    base_url = QUrl.fromLocalFile(str(file_path.parent.resolve()))
-            except Exception as e:
-                print(f"Error determining base_url for {self.current_file}: {e}")
-                # Fallback to default empty base_url
+        base_url = QUrl()
+        try:
+            file_path = Path(self.current_file)
+            base_url = QUrl.fromLocalFile(str(file_path.parent.resolve()) + os.sep)
+        except Exception as e:
+            print(f"Error determining base_url for {self.current_file}: {e}")
+        print(f"DEBUG: Using base_url for preview: {base_url.toString()}")
         self.preview.set_markdown(text, base_url=base_url)
 
     def open_file(self, file_path: str | None = None):
@@ -800,7 +828,7 @@ class MainWindow(QMainWindow):
                 self.current_file = resolved_path
                 self.last_saved_text = content # Update last saved text to current content
                 self.setWindowTitle(f"Marknote - {Path(resolved_path).name}") # Update window title
-                self.preview.set_markdown(content) # Update preview
+                self.update_preview() # <-- ensure preview is updated with correct base_url
                 
                 self.recent_files_manager.add_to_recent_files(resolved_path)
                 self.update_recent_files_menu()
@@ -871,7 +899,7 @@ class MainWindow(QMainWindow):
             self.current_file = str(path)
             self.setWindowTitle(f"Marknote - {path.name}") # Update window title
             self.save_last_note(str(path)) # Update last opened note in config
-            self.preview.set_markdown(content) # Update preview
+            self.update_preview() # <-- ensure preview is updated with correct base_url
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to open file: {e}")
 
@@ -892,6 +920,7 @@ class MainWindow(QMainWindow):
         else:
             # If no current file, trigger "Save As" dialog
             self.save_file_as()
+        self.update_preview()
 
     def save_file_as(self):
         """Saves the current editor content to a new file, chosen via a dialog."""
@@ -911,6 +940,7 @@ class MainWindow(QMainWindow):
             
             self.current_file = str(Path(file_path_str).resolve()) # Update current file to new path
             self.save_file() # Call save_file, which will now use the new current_file
+            self.update_preview()
                              # This also handles adding to recent files and updating title.
 
     def refresh_library(self, filter_text: str = ""):
@@ -1577,6 +1607,130 @@ class MainWindow(QMainWindow):
         # Optionally, move cursor to select "Link Text" or place it inside the URL parentheses
         # current_pos = self.editor.SendScintilla(self.editor.SCI_GETCURRENTPOS)
         # self.editor.SendScintilla(self.editor.SCI_SETSEL, current_pos - len(template) + 1, current_pos - len(template) + 1 + len("Link Text"))
+
+    def insert_image(self):
+        # Ask user: file or URL?
+        mode, ok = QInputDialog.getItem(self, "Insert Image", "Choose image source:", ["File", "URL"], 0, False)
+        if not ok:
+            return
+        if mode == "File":
+            file_path, _ = QFileDialog.getOpenFileName(self, "Select Image File", "", "Images (*.png *.jpg *.jpeg *.gif *.bmp *.webp)")
+            if not file_path:
+                return
+            # Ask for width/height (optional)
+            width, ok_w = QInputDialog.getInt(self, "Image Width (optional)", "Width (px, 0 for original):", 0, 0)
+            if not ok_w:
+                return
+            height, ok_h = QInputDialog.getInt(self, "Image Height (optional)", "Height (px, 0 for original):", 0, 0)
+            if not ok_h:
+                return
+            # Copy image to images/ folder in note's directory
+            note_dir = os.path.dirname(self.current_file) if self.current_file else os.getcwd()
+            images_dir = os.path.join(note_dir, "images")
+            os.makedirs(images_dir, exist_ok=True)
+            base_name = os.path.basename(file_path)
+            dest_path = os.path.join(images_dir, base_name)
+            # Avoid overwrite
+            i = 1
+            name, ext = os.path.splitext(base_name)
+            while os.path.exists(dest_path):
+                dest_path = os.path.join(images_dir, f"{name}_{i}{ext}")
+                i += 1
+            # Resize if needed
+            if width > 0 or height > 0:
+                img = Image.open(file_path)
+                orig_w, orig_h = img.size
+                new_w = width if width > 0 else orig_w
+                new_h = height if height > 0 else orig_h
+                img = img.resize((new_w, new_h), Image.LANCZOS)
+                img.save(dest_path)
+            else:
+                shutil.copy2(file_path, dest_path)
+            # When saving the image, always use forward slashes for rel_path
+            rel_path = os.path.relpath(dest_path, note_dir).replace("\\", "/")
+            # Insert Markdown or HTML
+            if width > 0 or height > 0:
+                html = f'<img src="{rel_path}" width="{width if width > 0 else ''}" height="{height if height > 0 else ''}" />'
+                self.editor.insert(html)
+            else:
+                md = f'![image]({rel_path})'
+                self.editor.insert(md)
+        else:  # URL
+            url, ok = QInputDialog.getText(self, "Insert Image URL", "Image URL:")
+            if not ok or not url:
+                return
+            width, ok_w = QInputDialog.getInt(self, "Image Width (optional)", "Width (px, 0 for original):", 0, 0)
+            if not ok_w:
+                return
+            height, ok_h = QInputDialog.getInt(self, "Image Height (optional)", "Height (px, 0 for original):", 0, 0)
+            if not ok_h:
+                return
+            # Check if this URL previously failed
+            if url in MainWindow.failed_image_downloads:
+                QMessageBox.warning(self, "Image Download Failed", f"Previously failed to download image from URL:\n{url}\nInserting as remote link.")
+                if width > 0 or height > 0:
+                    html = f'<img src="{url}" width="{width if width > 0 else ''}" height="{height if height > 0 else ''}" />'
+                    self.editor.insert(html)
+                else:
+                    md = f'![image]({url})'
+                    self.editor.insert(md)
+                self.update_preview()
+                return
+            # Try to download the image (first attempt: default headers)
+            note_dir = os.path.dirname(self.current_file) if self.current_file else os.getcwd()
+            images_dir = os.path.join(note_dir, "images")
+            os.makedirs(images_dir, exist_ok=True)
+            import urllib.parse
+            base_name = os.path.basename(urllib.parse.urlparse(url).path)
+            if not base_name:
+                base_name = "downloaded_image.png"
+            dest_path = os.path.join(images_dir, base_name)
+            i = 1
+            name, ext = os.path.splitext(base_name)
+            while os.path.exists(dest_path):
+                dest_path = os.path.join(images_dir, f"{name}_{i}{ext}")
+                i += 1
+            success = False
+            try:
+                resp = requests.get(url, timeout=10)
+                resp.raise_for_status()
+                with open(dest_path, "wb") as f:
+                    f.write(resp.content)
+                # When saving the image, always use forward slashes for rel_path
+                rel_path = os.path.relpath(dest_path, note_dir).replace("\\", "/")
+                success = True
+            except Exception:
+                # Retry with browser-like headers
+                try:
+                    headers = {
+                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+                        "Referer": url,
+                        "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+                    }
+                    resp = requests.get(url, headers=headers, timeout=10)
+                    resp.raise_for_status()
+                    with open(dest_path, "wb") as f:
+                        f.write(resp.content)
+                    # When saving the image, always use forward slashes for rel_path
+                    rel_path = os.path.relpath(dest_path, note_dir).replace("\\", "/")
+                    success = True
+                except Exception as e:
+                    MainWindow.failed_image_downloads.add(url)
+                    QMessageBox.warning(self, "Image Download Failed", f"Failed to download image from URL:\n{url}\nError: {e}\nInserting as remote link.")
+                    if width > 0 or height > 0:
+                        html = f'<img src="{url}" width="{width if width > 0 else ''}" height="{height if height > 0 else ''}" />'
+                        self.editor.insert(html)
+                    else:
+                        md = f'![image]({url})'
+                        self.editor.insert(md)
+            if success:
+                if width > 0 or height > 0:
+                    html = f'<img src="{rel_path}" width="{width if width > 0 else ''}" height="{height if height > 0 else ''}" />'
+                    self.editor.insert(html)
+                else:
+                    md = f'![image]({rel_path})'
+                    self.editor.insert(md)
+        self.update_preview()
 
 
 if __name__ == "__main__":

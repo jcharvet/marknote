@@ -4,3 +4,4 @@ PyQt6-QScintilla
 markdown
 requests
 PyQt6-sip
+Pillow
