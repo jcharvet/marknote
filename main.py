@@ -11,6 +11,8 @@ from pathlib import Path
 import re
 import sys
 import textwrap
+import shutil
+import tempfile
 
 from config_utils import (
     load_app_config, save_app_config,
@@ -35,6 +37,7 @@ from PIL import Image
 
 from ai import AIMarkdownAssistant
 import markdown
+import requests
 
 class RecentFilesManager:
     """
@@ -200,7 +203,7 @@ class MarkdownPreview(QWebEngineView):
         text_with_mermaid_divs = mermaid_pattern.sub(mermaid_replacer, text)
         
         # Convert Markdown to HTML (including the divs for Mermaid)
-        html_body = markdown.markdown(text_with_mermaid_divs, extensions=['fenced_code'])
+        html_body = markdown.markdown(text_with_mermaid_divs, extensions=['fenced_code', 'extra'])
         
         # Construct the full HTML document
         # Basic dark theme styling is applied via <style>
@@ -237,6 +240,7 @@ class MarkdownPreview(QWebEngineView):
         self.current_html = full_html
         if base_url:
             self.base_url = base_url
+        print(f"DEBUG: setHtml base_url: {self.base_url.toString()}")
         self.setHtml(self.current_html, baseUrl=self.base_url)
 
 class PrintPreviewDialog(QDialog):
@@ -342,6 +346,8 @@ class MainWindow(QMainWindow):
             margin: 4px 0px 4px 0px;
         }
     """)
+
+    failed_image_downloads = set()
 
     def __init__(self):
         """Initializes the MainWindow, setting up UI, loading configurations, and recent files."""
@@ -776,15 +782,15 @@ class MainWindow(QMainWindow):
     def update_preview(self):
         """Updates the Markdown preview pane with the current editor content."""
         text = self.editor.toPlainText()
-        base_url = QUrl()  # Default empty base URL
+        base_url = QUrl()
         if self.current_file:
             try:
                 file_path = Path(self.current_file)
-                if file_path.is_file(): # Ensure it's a file and not just a path string
-                    base_url = QUrl.fromLocalFile(str(file_path.parent.resolve()))
+                if file_path.is_file():
+                    base_url = QUrl.fromLocalFile(str(file_path.parent.resolve()) + os.sep)
             except Exception as e:
                 print(f"Error determining base_url for {self.current_file}: {e}")
-                # Fallback to default empty base_url
+        print(f"DEBUG: Using base_url for preview: {base_url.toString()}")
         self.preview.set_markdown(text, base_url=base_url)
 
     def open_file(self, file_path: str | None = None):
@@ -1596,8 +1602,6 @@ class MainWindow(QMainWindow):
         # self.editor.SendScintilla(self.editor.SCI_SETSEL, current_pos - len(template) + 1, current_pos - len(template) + 1 + len("Link Text"))
 
     def insert_image(self):
-        from PyQt6.QtWidgets import QInputDialog, QFileDialog
-        import shutil, os
         # Ask user: file or URL?
         mode, ok = QInputDialog.getItem(self, "Insert Image", "Choose image source:", ["File", "URL"], 0, False)
         if not ok:
@@ -1635,7 +1639,8 @@ class MainWindow(QMainWindow):
                 img.save(dest_path)
             else:
                 shutil.copy2(file_path, dest_path)
-            rel_path = os.path.relpath(dest_path, note_dir)
+            # When saving the image, always use forward slashes for rel_path
+            rel_path = os.path.relpath(dest_path, note_dir).replace("\\", "/")
             # Insert Markdown or HTML
             if width > 0 or height > 0:
                 html = f'<img src="{rel_path}" width="{width if width > 0 else ''}" height="{height if height > 0 else ''}" />'
@@ -1653,12 +1658,71 @@ class MainWindow(QMainWindow):
             height, ok_h = QInputDialog.getInt(self, "Image Height (optional)", "Height (px, 0 for original):", 0, 0)
             if not ok_h:
                 return
-            if width > 0 or height > 0:
-                html = f'<img src="{url}" width="{width if width > 0 else ''}" height="{height if height > 0 else ''}" />'
-                self.editor.insert(html)
-            else:
-                md = f'![image]({url})'
-                self.editor.insert(md)
+            # Check if this URL previously failed
+            if url in MainWindow.failed_image_downloads:
+                QMessageBox.warning(self, "Image Download Failed", f"Previously failed to download image from URL:\n{url}\nInserting as remote link.")
+                if width > 0 or height > 0:
+                    html = f'<img src="{url}" width="{width if width > 0 else ''}" height="{height if height > 0 else ''}" />'
+                    self.editor.insert(html)
+                else:
+                    md = f'![image]({url})'
+                    self.editor.insert(md)
+                self.update_preview()
+                return
+            # Try to download the image (first attempt: default headers)
+            note_dir = os.path.dirname(self.current_file) if self.current_file else os.getcwd()
+            images_dir = os.path.join(note_dir, "images")
+            os.makedirs(images_dir, exist_ok=True)
+            import urllib.parse
+            base_name = os.path.basename(urllib.parse.urlparse(url).path)
+            if not base_name:
+                base_name = "downloaded_image.png"
+            dest_path = os.path.join(images_dir, base_name)
+            i = 1
+            name, ext = os.path.splitext(base_name)
+            while os.path.exists(dest_path):
+                dest_path = os.path.join(images_dir, f"{name}_{i}{ext}")
+                i += 1
+            success = False
+            try:
+                resp = requests.get(url, timeout=10)
+                resp.raise_for_status()
+                with open(dest_path, "wb") as f:
+                    f.write(resp.content)
+                # When saving the image, always use forward slashes for rel_path
+                rel_path = os.path.relpath(dest_path, note_dir).replace("\\", "/")
+                success = True
+            except Exception:
+                # Retry with browser-like headers
+                try:
+                    headers = {
+                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+                        "Referer": url,
+                        "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+                    }
+                    resp = requests.get(url, headers=headers, timeout=10)
+                    resp.raise_for_status()
+                    with open(dest_path, "wb") as f:
+                        f.write(resp.content)
+                    # When saving the image, always use forward slashes for rel_path
+                    rel_path = os.path.relpath(dest_path, note_dir).replace("\\", "/")
+                    success = True
+                except Exception as e:
+                    MainWindow.failed_image_downloads.add(url)
+                    QMessageBox.warning(self, "Image Download Failed", f"Failed to download image from URL:\n{url}\nError: {e}\nInserting as remote link.")
+                    if width > 0 or height > 0:
+                        html = f'<img src="{url}" width="{width if width > 0 else ''}" height="{height if height > 0 else ''}" />'
+                        self.editor.insert(html)
+                    else:
+                        md = f'![image]({url})'
+                        self.editor.insert(md)
+            if success:
+                if width > 0 or height > 0:
+                    html = f'<img src="{rel_path}" width="{width if width > 0 else ''}" height="{height if height > 0 else ''}" />'
+                    self.editor.insert(html)
+                else:
+                    md = f'![image]({rel_path})'
+                    self.editor.insert(md)
         self.update_preview()
 
 
