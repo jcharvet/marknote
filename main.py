@@ -18,15 +18,15 @@ from config_utils import (
     CONFIG_FILE_NAME, CONFIG_KEY_GEMINI_API_KEY
 )
 
-from PyQt6.QtCore import Qt, QTimer, QEventLoop, QEvent, QPoint
+from PyQt6.QtCore import Qt, QTimer, QEventLoop, QEvent, QPoint, QByteArray, QUrl # Added QByteArray, QUrl
 from PyQt6.QtGui import QAction, QColor, QFont, QIcon, QKeySequence, QPalette
 from PyQt6.QtWidgets import (
     QApplication, QFileDialog, QHBoxLayout, QInputDialog, QLineEdit,
     QMainWindow, QMenu, QMessageBox, QPushButton, QSplitter, QTextEdit,
-    QToolBar, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget
+    QToolBar, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget, QDialog # Added QDialog
 )
 from PyQt6.Qsci import QsciLexerMarkdown, QsciScintilla
-from PyQt6.QtWebEngineWidgets import QWebEngineView
+from PyQt6.QtWebEngineWidgets import QWebEngineView # QWebEngineView already imported
 from PyQt6.QtPrintSupport import QPrinter, QPrintDialog
 
 from ai import AIMarkdownAssistant
@@ -233,6 +233,54 @@ class MarkdownPreview(QWebEngineView):
             </html>'''
         self.setHtml(full_html)
 
+class PrintPreviewDialog(QDialog):
+    """
+    A dialog for showing a print preview of a PDF document.
+    """
+    def __init__(self, parent=None):
+        """
+        Initializes the PrintPreviewDialog.
+
+        Args:
+            parent (QWidget, optional): The parent widget. Defaults to None.
+        """
+        super().__init__(parent)
+        self.setWindowTitle("Print Preview")
+        self.setMinimumSize(800, 600) # Set a reasonable default size
+
+        main_layout = QVBoxLayout(self)
+
+        self.web_view = QWebEngineView()
+        main_layout.addWidget(self.web_view)
+
+        button_layout = QHBoxLayout()
+
+        self.print_button = QPushButton("Print") # Made print_button an instance attribute
+        self.print_button.clicked.connect(self.accept)
+        button_layout.addWidget(self.print_button)
+
+        cancel_button = QPushButton("Cancel")
+        cancel_button.clicked.connect(self.reject)
+        button_layout.addWidget(cancel_button)
+
+        main_layout.addLayout(button_layout)
+        self.setLayout(main_layout)
+
+    def show_preview(self, pdf_data: QByteArray): # Changed type hint to QByteArray
+        """
+        Loads and displays the PDF data in the web view.
+
+        Args:
+            pdf_data (QByteArray): The PDF data to display.
+        """
+        if pdf_data and not pdf_data.isEmpty():
+            self.web_view.setContent(pdf_data, "application/pdf")
+            self.print_button.setEnabled(True)
+        else:
+            self.web_view.setHtml("<p>Error: Could not generate PDF preview.</p>")
+            self.print_button.setEnabled(False) # Disable Print button if PDF data is invalid
+
+
 class MainWindow(QMainWindow):
     """
     The main application window for Marknote.
@@ -307,37 +355,56 @@ class MainWindow(QMainWindow):
         self.update_recent_files_menu() # Populate the "Open Recent" menu
 
     def print_document(self):
-        """Handles printing of the current document via the preview pane."""
+        """Handles printing of the current document: shows preview, then system print dialog."""
         if not self.preview:
             QMessageBox.critical(self, "Error", "Preview pane is not available.")
             return
 
-        printer = QPrinter(QPrinter.PrinterMode.HighResolution)
-        dialog = QPrintDialog(printer, self)
+        def _handle_pdf_generation(pdf_data: QByteArray):
+            if not pdf_data:
+                QMessageBox.warning(self, "Print Error", "Could not generate PDF for preview.")
+                return
 
-        if dialog.exec() == QPrintDialog.DialogCode.Accepted:
-            # Use an event loop to wait for the asynchronous print operation to finish
-            # This prevents the application from freezing during printing.
-            loop = QEventLoop()
-            
-            # Connect the printFinished signal to a handler and the loop's quit slot
-            self.preview.page().printFinished.connect(self._handle_print_finished) # Corrected: page().printFinished
-            self.preview.page().printFinished.connect(loop.quit) # Corrected: page().printFinished
-            
-            self.preview.page().print(printer, lambda success: None) # Print the content of the web page
-            
-            # Execute the event loop, excluding user input to prevent interaction issues
-            loop.exec(QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents)
-            
-            # Disconnect signals after use to avoid multiple calls if print_document is called again
-            try:
-                self.preview.page().printFinished.disconnect(self._handle_print_finished) # Corrected
-                self.preview.page().printFinished.disconnect(loop.quit) # Corrected
-            except TypeError: 
-                # This can happen if the signal was already disconnected or never connected properly.
-                pass 
-        else:
-            print("Print dialog cancelled by user.") # Log or inform user
+            preview_dialog = PrintPreviewDialog(self)
+            preview_dialog.show_preview(pdf_data)
+
+            if preview_dialog.exec() == QDialog.DialogCode.Accepted:
+                # User clicked "Print" in the preview dialog, now show system print dialog
+                printer = QPrinter(QPrinter.PrinterMode.HighResolution)
+                system_print_dialog = QPrintDialog(printer, self)
+
+                if system_print_dialog.exec() == QDialog.DialogCode.Accepted:
+                    # Use an event loop to wait for the asynchronous print operation
+                    loop = QEventLoop()
+                    
+                    # Ensure existing _handle_print_finished is connected correctly
+                    # and also connect to loop.quit
+                    try:
+                        # Disconnect any previous connections to be safe
+                        self.preview.page().printFinished.disconnect()
+                    except TypeError:
+                        pass # No connections to disconnect
+                    
+                    self.preview.page().printFinished.connect(self._handle_print_finished)
+                    self.preview.page().printFinished.connect(loop.quit)
+                    
+                    self.preview.page().print(printer, lambda success: None) # Print the content
+                    
+                    loop.exec(QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents)
+                    
+                    # Disconnect after use
+                    try:
+                        self.preview.page().printFinished.disconnect(self._handle_print_finished)
+                        self.preview.page().printFinished.disconnect(loop.quit)
+                    except TypeError:
+                        pass # Signal might have already been disconnected
+                else:
+                    print("System print dialog cancelled by user.")
+            else:
+                print("Print preview dialog cancelled by user.")
+
+        # Initiate PDF generation. The callback _handle_pdf_generation will be called with the PDF data.
+        self.preview.page().printToPdf(_handle_pdf_generation)
 
     def _handle_print_finished(self, success: bool):
         """
