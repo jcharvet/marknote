@@ -270,7 +270,24 @@ class PrintPreviewDialog(QDialog):
         self.setLayout(main_layout)
 
     def trigger_web_print(self):
-        self.web_view.page().runJavaScript("window.print();")
+        import tempfile, os, webbrowser
+        from PyQt6.QtWidgets import QMessageBox
+        
+        def after_html(html_content):
+            # Inject window.print() on load
+            if '</body>' in html_content:
+                html_content = html_content.replace('</body>', '<script>window.onload = function(){window.print();}</script></body>')
+            else:
+                html_content += '<script>window.onload = function(){window.print();}</script>'
+            temp_dir = tempfile.gettempdir()
+            html_path = os.path.join(temp_dir, "marknote_print.html")
+            try:
+                with open(html_path, "w", encoding="utf-8") as f:
+                    f.write(html_content)
+                webbrowser.open(f"file://{html_path}")
+            except Exception as e:
+                QMessageBox.critical(self, "Print Error", f"Failed to open browser for printing: {e}")
+        self.web_view.page().toHtml(after_html)
 
     def show_preview_html(self, html_content: str, base_url: QUrl):
         if html_content:
