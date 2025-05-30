@@ -656,6 +656,14 @@ class MainWindow(QMainWindow):
         if hasattr(self, 'toolbar'):
             self.toolbar.addAction(QAction(QIcon(), "Insert Image...", self, triggered=self.insert_image))
 
+        # Override keyPressEvent for Enter/Return
+        orig_keyPressEvent = self.editor.keyPressEvent
+        def custom_keyPressEvent(event):
+            if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+                self.update_preview()
+            orig_keyPressEvent(event)
+        self.editor.keyPressEvent = custom_keyPressEvent
+
     def _setup_central_widget(self):
         """
         Sets up the central widget, layout, and integrates the main UI components
@@ -899,6 +907,7 @@ class MainWindow(QMainWindow):
         else:
             # If no current file, trigger "Save As" dialog
             self.save_file_as()
+        self.update_preview()
 
     def save_file_as(self):
         """Saves the current editor content to a new file, chosen via a dialog."""
@@ -918,6 +927,7 @@ class MainWindow(QMainWindow):
             
             self.current_file = str(Path(file_path_str).resolve()) # Update current file to new path
             self.save_file() # Call save_file, which will now use the new current_file
+            self.update_preview()
                              # This also handles adding to recent files and updating title.
 
     def refresh_library(self, filter_text: str = ""):
@@ -1649,6 +1659,7 @@ class MainWindow(QMainWindow):
             else:
                 md = f'![image]({url})'
                 self.editor.insert(md)
+        self.update_preview()
 
 
 if __name__ == "__main__":
