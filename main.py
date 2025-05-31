@@ -16,8 +16,8 @@ import tempfile
 
 from config_utils import (
     load_app_config, save_app_config,
-    CONFIG_KEY_DEFAULT_FOLDER, CONFIG_KEY_LAST_NOTE,
-    CONFIG_FILE_NAME, CONFIG_KEY_GEMINI_API_KEY
+    CONFIG_KEY_DEFAULT_NOTES_FOLDER, CONFIG_KEY_LAST_NOTE,
+    CONFIG_FILE_NAME, CONFIG_KEY_GEMINI_API_KEY, CONFIG_KEY_EDITOR_FONT_FAMILY, CONFIG_KEY_EDITOR_FONT_SIZE
 )
 
 import PyQt6.QtCore # For version diagnostics
@@ -36,6 +36,7 @@ from PyQt6.QtWebEngineCore import QWebEngineSettings # Added for PDF preview set
 from PIL import Image
 
 from ai import AIMarkdownAssistant
+from settings_dialog import SettingsDialog
 import markdown
 import requests
 
@@ -632,10 +633,17 @@ class MainWindow(QMainWindow):
 
         file_menu.addSeparator()
 
-        print_action = QAction("Print...", self) # Standard naming
-        print_action.setShortcut(QKeySequence.StandardKey.Print) # Use standard shortcut
-        print_action.triggered.connect(self.print_document)
-        file_menu.addAction(print_action)
+        self.print_action = QAction(QIcon.fromTheme("document-print"), "&Print...", self)
+        self.print_action.setShortcut(QKeySequence.StandardKey.Print)
+        self.print_action.triggered.connect(self.print_document)
+        file_menu.addAction(self.print_action)
+
+        file_menu.addSeparator()
+
+        preferences_action = QAction("Preferences...", self)
+        preferences_action.setShortcut(QKeySequence("Ctrl+,"))
+        preferences_action.triggered.connect(self._open_settings_dialog)
+        file_menu.addAction(preferences_action)
 
         file_menu.addSeparator()
 
@@ -1008,12 +1016,13 @@ class MainWindow(QMainWindow):
             
             # Persist the new default folder to application configuration
             config = load_app_config()
-            config[CONFIG_KEY_DEFAULT_FOLDER] = self.default_folder
+            config[CONFIG_KEY_DEFAULT_NOTES_FOLDER] = self.default_folder
             save_app_config(config) # Handles its own error reporting
             
             self.refresh_library() # Refresh the file library view
 
     def open_tree_item(self, item: QTreeWidgetItem, column: int):
+
         """
         Handles clicks on items in the file library tree.
         Opens files or expands/collapses folders.
@@ -1596,6 +1605,35 @@ class MainWindow(QMainWindow):
         QMessageBox.about(self, "Markdown & Mermaid Syntax Guide", help_text)
 
 
+    def _open_settings_dialog(self):
+        """Opens the settings/preferences dialog and applies changes if accepted."""
+        if SettingsDialog.get_settings(self):
+            # Settings were saved, reload config and apply them
+            config = load_app_config()
+
+            # Apply editor font settings
+            font_family = config.get(CONFIG_KEY_EDITOR_FONT_FAMILY, "Arial")
+            font_size = config.get(CONFIG_KEY_EDITOR_FONT_SIZE, 12)
+            new_font = QFont(font_family, font_size)
+            self.editor.setFont(new_font)
+            if self.editor.lexer(): # Ensure lexer exists
+                self.editor.lexer().setDefaultFont(new_font)
+            self.editor.setMarginsFont(new_font) # For line numbers margin
+
+            # Apply default notes folder setting
+            new_default_folder = config.get(CONFIG_KEY_DEFAULT_NOTES_FOLDER)
+            if new_default_folder and Path(new_default_folder).is_dir() and new_default_folder != self.default_folder:
+                self.default_folder = new_default_folder
+                self.refresh_library()
+                QMessageBox.information(self, "Settings Applied", 
+                                        f"Default notes folder changed to: {new_default_folder}\n" 
+                                        "Editor font updated.")
+            else:
+                QMessageBox.information(self, "Settings Applied", "Editor font updated.")
+        else:
+            # Dialog was cancelled, or an error occurred during save in dialog
+            pass # Optionally, log or inform user if specific feedback is needed
+
     def _normalize_path(self, path_str: str | None) -> str:
         """
         Normalizes a path string using pathlib for robustness and platform-independence.
@@ -1640,7 +1678,7 @@ class MainWindow(QMainWindow):
             str: The absolute path to the determined default folder.
         """
         config = load_app_config()
-        config_default_folder_str = config.get(CONFIG_KEY_DEFAULT_FOLDER)
+        config_default_folder_str = config.get(CONFIG_KEY_DEFAULT_NOTES_FOLDER)
         
         if config_default_folder_str:
             normalized_path_from_config = Path(self._normalize_path(config_default_folder_str))
@@ -1652,7 +1690,7 @@ class MainWindow(QMainWindow):
                 if normalized_path_from_config.is_dir(): # Check if it's actually a directory
                     # If normalization changed the path string, update the config
                     if str(normalized_path_from_config) != config_default_folder_str:
-                        config[CONFIG_KEY_DEFAULT_FOLDER] = str(normalized_path_from_config)
+                        config[CONFIG_KEY_DEFAULT_NOTES_FOLDER] = str(normalized_path_from_config)
                         save_app_config(config)
                     return str(normalized_path_from_config)
                 else:
@@ -1710,7 +1748,7 @@ class MainWindow(QMainWindow):
             if not final_chosen_path.is_dir():
                 raise OSError(f"Chosen path '{final_chosen_path}' could not be established as a directory.")
             
-            config[CONFIG_KEY_DEFAULT_FOLDER] = str(final_chosen_path)
+            config[CONFIG_KEY_DEFAULT_NOTES_FOLDER] = str(final_chosen_path)
             if not save_app_config(config):
                 # save_app_config should show its own error, but we can log here too.
                 print(f"Warning: Failed to save new default folder {final_chosen_path} to config.")

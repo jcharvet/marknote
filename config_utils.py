@@ -5,9 +5,20 @@ from PyQt6.QtWidgets import QMessageBox # Required for save_app_config
 
 # Configuration Constants
 CONFIG_FILE_NAME = "config.json"
-CONFIG_KEY_DEFAULT_FOLDER = "DEFAULT_FOLDER"
-CONFIG_KEY_LAST_NOTE = "LAST_NOTE"
 CONFIG_KEY_GEMINI_API_KEY = "GEMINI_API_KEY"
+CONFIG_KEY_DEFAULT_NOTES_FOLDER = "DEFAULT_NOTES_FOLDER"
+CONFIG_KEY_EDITOR_FONT_FAMILY = "EDITOR_FONT_FAMILY"
+CONFIG_KEY_EDITOR_FONT_SIZE = "EDITOR_FONT_SIZE"
+CONFIG_KEY_LAST_NOTE = "LAST_NOTE"  # Retaining for existing functionality
+
+# Default Configuration Values
+DEFAULT_CONFIG = {
+    CONFIG_KEY_GEMINI_API_KEY: "",  # Default to empty, user must fill in
+    CONFIG_KEY_DEFAULT_NOTES_FOLDER: "",
+    CONFIG_KEY_EDITOR_FONT_FAMILY: "Arial",
+    CONFIG_KEY_EDITOR_FONT_SIZE: 12,
+    CONFIG_KEY_LAST_NOTE: ""
+}
 
 def _get_config_path() -> Path:
     """Returns the absolute path to the configuration file.
@@ -45,22 +56,30 @@ def _get_config_path() -> Path:
 
 def load_app_config() -> dict:
     """Loads the application configuration from config.json.
+    If the file doesn't exist or is invalid, returns default values.
 
     Returns:
-        dict: The configuration dictionary, or an empty dict if loading fails.
+        dict: The configuration dictionary, merged with defaults.
     """
+    config = DEFAULT_CONFIG.copy() # Start with defaults
     config_path = _get_config_path()
-    if not config_path.exists():
-        return {}
-    try:
-        with open(config_path, 'r', encoding='utf-8') as f:
-            return json.load(f)
-    except json.JSONDecodeError as e:
-        print(f"Warning: Could not parse {CONFIG_FILE_NAME} at {config_path}: {e}")
-        return {}
-    except IOError as e:
-        print(f"Warning: Could not read {CONFIG_FILE_NAME} at {config_path}: {e}")
-        return {}
+
+    if config_path.exists():
+        try:
+            with open(config_path, 'r', encoding='utf-8') as f:
+                user_config = json.load(f)
+                config.update(user_config) # Override defaults with user settings
+        except json.JSONDecodeError as e:
+            logging.warning(f"Could not parse {CONFIG_FILE_NAME} at {config_path}: {e}. Using default config.")
+            # QMessageBox.warning(None, "Config Warning", f"Could not parse {CONFIG_FILE_NAME}. Using default settings.") # Optional: UI feedback
+        except IOError as e:
+            logging.warning(f"Could not read {CONFIG_FILE_NAME} at {config_path}: {e}. Using default config.")
+            # QMessageBox.warning(None, "Config Warning", f"Could not read {CONFIG_FILE_NAME}. Using default settings.") # Optional: UI feedback
+    else:
+        logging.info(f"{CONFIG_FILE_NAME} not found at {config_path}. Using default config and attempting to save it.")
+        save_app_config(config) # Save default config if no file exists
+    
+    return config
 
 def save_app_config(config_data: dict) -> bool:
     """Saves the application configuration to config.json.
