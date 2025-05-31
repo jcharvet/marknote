@@ -22,8 +22,8 @@ from config_utils import (
 
 import PyQt6.QtCore # For version diagnostics
 import PyQt6.QtWebEngineCore # For version diagnostics
-from PyQt6.QtCore import Qt, QTimer, QEventLoop, QEvent, QPoint, QByteArray, QUrl # Added QByteArray, QUrl
-from PyQt6.QtGui import QAction, QColor, QFont, QIcon, QKeySequence, QPalette
+from PyQt6.QtCore import Qt, QTimer, QEventLoop, QEvent, QPoint, QByteArray, QMimeData, QUrl # Added QByteArray, QMimeData, QUrl
+from PyQt6.QtGui import QAction, QColor, QFont, QIcon, QKeySequence, QPalette, QKeyEvent
 from PyQt6.QtWidgets import (
     QApplication, QFileDialog, QHBoxLayout, QInputDialog, QLineEdit,
     QMainWindow, QMenu, QMessageBox, QPushButton, QSplitter, QTextEdit,
@@ -105,39 +105,68 @@ class MarkdownEditor(QsciScintilla):
 
     It includes syntax highlighting for Markdown, dark mode theme,
     and other editor features like auto-indent and folding.
+    It also handles smart pasting of URLs.
     """
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, main_window=None):
         """
         Initializes the MarkdownEditor.
 
         Args:
             parent (QWidget, optional): The parent widget. Defaults to None.
+            main_window (MainWindow, optional): Reference to the main window for callbacks.
         """
         super().__init__(parent)
+        self.main_window = main_window
         self._configure_editor()
 
     def _configure_editor(self):
         """Sets up the editor's appearance and behavior."""
-        # Set lexer for Markdown
         lexer = QsciLexerMarkdown()
-        lexer.setDefaultFont(QFont("Fira Mono", 12))
-        lexer.setFont(QFont("Fira Mono", 12))
+        lexer.setDefaultFont(QFont("Fira Mono", 12)) # Ensure lexer font is set
         # Set colors for dark mode
-        lexer.setColor(QColor("#d7dae0"))
-        lexer.setPaper(QColor("#282c34"))
+        lexer.setColor(QColor("#d7dae0")) # Default text
+        lexer.setPaper(QColor("#282c34")) # Background
+
+        # Configure specific Markdown elements (examples)
+        # lexer.setColor(QColor("#c678dd"), QsciLexerMarkdown.Emphasis) # Italics
+        # lexer.setColor(QColor("#e5c07b"), QsciLexerMarkdown.StrongEmphasis) # Bold
+        # lexer.setColor(QColor("#61afef"), QsciLexerMarkdown.Link) # Links
+        # lexer.setColor(QColor("#98c379"), QsciLexerMarkdown.Header1) # H1
+        # lexer.setColor(QColor("#98c379"), QsciLexerMarkdown.Header2) # H2
+        # lexer.setColor(QColor("#98c379"), QsciLexerMarkdown.Header3) # H3
+        # lexer.setColor(QColor("#56b6c2"), QsciLexerMarkdown.BlockQuote) # Blockquotes
+        # lexer.setColor(QColor("#abb2bf"), QsciLexerMarkdown.CodeBlock) # Code blocks
+
         self.setLexer(lexer)
         self.setUtf8(True)
+        
+        # Margins and Caret
         self.setMarginsBackgroundColor(QColor("#21252b"))
-        self.setMarginsForegroundColor(QColor("#61AFEF"))
-        self.setCaretForegroundColor(QColor("#61AFEF"))
+        self.setMarginsForegroundColor(QColor("#61AFEF")) # Line numbers color
+        self.setCaretForegroundColor(QColor("#61AFEF")) # Blinking cursor color
+        self.setCaretLineVisible(True)
+        self.setCaretLineBackgroundColor(QColor("#2c313a")) # Background of the current line
+
+        # Brace matching
         self.setBraceMatching(QsciScintilla.BraceMatch.SloppyBraceMatch)
+        self.setMatchedBraceBackgroundColor(QColor("#3b4048"))
+        self.setUnmatchedBraceForegroundColor(QColor("#ff6b6b"))
+
+        # Indentation and Tabs
         self.setAutoIndent(True)
         self.setIndentationGuides(True)
-        self.setFolding(QsciScintilla.FoldStyle.BoxedTreeFoldStyle)
         self.setTabWidth(4)
-        self.setIndentationsUseTabs(False)
-        self.setFont(QFont("Fira Mono", 12)) # Default font for text
-        self.setStyleSheet("background-color: #282c34; color: #d7dae0;") # Ensure base styling
+        self.setIndentationsUseTabs(False) # Use spaces instead of tabs
+
+        # Folding
+        self.setFolding(QsciScintilla.FoldStyle.BoxedTreeFoldStyle, margin=2)
+        
+        # Font for general text not covered by lexer (if any)
+        self.setFont(QFont("Fira Mono", 12)) 
+        
+        # Ensure base styling for the widget itself
+        self.setStyleSheet("background-color: #282c34; color: #d7dae0;")
+
 
     def toPlainText(self) -> str:
         """
@@ -157,9 +186,127 @@ class MarkdownEditor(QsciScintilla):
         """
         self.setText(text)
 
+    def _process_pasted_data(self, mime_data: QMimeData) -> bool:
+        print("\n*** MARKNOTE PASTE DEBUG: _process_pasted_data CALLED ***")
+        if mime_data.hasText() and self.main_window:
+            print(f"Processing: MimeData has text. Main window reference: {'Valid' if self.main_window else 'INVALID'}")
+            text = mime_data.text().strip()
+            print(f"Pasted text (stripped): '{text}'")
+            
+            url_match = re.match(r'^https?://\S+$', text)
+            print(f"URL regex match: {url_match}")
+            
+            if url_match:
+                print("Pasted text is a URL.")
+                url = url_match.group(0)
+                print(f"Detected URL: {url}")
+                is_image_url = False
+                image_extensions = ('.png', '.jpg', '.jpeg', '.gif', '.bmp', '.svg', '.webp')
+
+                # 1. Check by extension (quick check)
+                try:
+                    # Ensure URL has a path component for extension checking
+                    parsed_qurl = QUrl(url)
+                    # path_str will be an empty string if there's no path
+                    path_str = parsed_qurl.path().lower() # Get path as string and lowercase it
+                    if parsed_qurl.isValid() and path_str and path_str != "/": # Check if path exists and is not just "/"
+                        if any(path_str.endswith(ext) for ext in image_extensions):
+                            print(f"URL matched image extension: {path_str}")
+                            is_image_url = True
+                    else:
+                        print(f"URL has no significant path or is invalid for extension check: {url}")
+                except Exception as e:
+                    print(f"Error during URL extension check: {e}")
+
+
+                # 2. If not identified as image by extension, then check Content-Type via HEAD request
+                if not is_image_url:
+                    print("URL not identified as image by extension, proceeding to HEAD request.")
+                    try:
+                        response = requests.head(url, timeout=3, allow_redirects=True, stream=True)
+                        response.raise_for_status()
+                        content_type = response.headers.get('Content-Type', '').lower()
+                        print(f"HEAD request Content-Type: {content_type}")
+                        if content_type.startswith('image/'):
+                            is_image_url = True
+                            print("Content-Type indicates image.")
+                        else:
+                            print("Content-Type does NOT indicate image.")
+                    except requests.RequestException as e:
+                        print(f"Could not verify URL content type for {url} via HEAD request: {e}")
+                    except Exception as e:
+                        print(f"Unexpected error during HEAD request for {url}: {e}")
+                else:
+                    print("URL already identified as image by extension. Skipping HEAD request.")
+                
+                print(f"FINAL check, is_image_url: {is_image_url}")
+                if is_image_url:
+                    print("Calling handle_pasted_image_url from _process_pasted_data")
+                    self.main_window.handle_pasted_image_url(url)
+                    print("--- End Paste Event (_process_pasted_data handled image) ---")
+                    return True # Handled
+                else:
+                    print("Calling handle_pasted_plain_url from _process_pasted_data")
+                    self.main_window.handle_pasted_plain_url(url)
+                    print("--- End Paste Event (_process_pasted_data handled plain URL) ---")
+                    return True # Handled
+            else: # Not a URL match
+                print("Pasted text is not a URL. Fallback in _process_pasted_data.")
+        else: # No text or no main_window
+            if not mime_data.hasText():
+                print("No text in MimeData. Fallback in _process_pasted_data.")
+            if not self.main_window: # Should not happen if main_window is passed in constructor
+                print("No main_window reference. Fallback in _process_pasted_data.")
+        
+        print("--- End Paste Event (_process_pasted_data did not handle, falling through) ---")
+        return False # Not handled by this logic
+
+    def keyPressEvent(self, event: QKeyEvent):
+        if event.matches(QKeySequence.StandardKey.Paste):
+            print("\n*** MARKNOTE PASTE DEBUG: Paste Key Detected in keyPressEvent ***")
+            clipboard = QApplication.clipboard()
+            if clipboard:
+                mime_data = clipboard.mimeData()
+                if self._process_pasted_data(mime_data): 
+                    event.accept() # Indicate we've handled the event
+                    print("*** MARKNOTE PASTE DEBUG: Paste event accepted in keyPressEvent. ***")
+                    return # Prevent further processing of this event
+            else:
+                print("*** MARKNOTE PASTE DEBUG: Clipboard not available in keyPressEvent. ***")
+            
+            # If clipboard is None or _process_pasted_data returned False (didn't handle)
+            print("*** MARKNOTE PASTE DEBUG: Paste keyPressEvent falling through to super (clipboard issue or not handled by _process_pasted_data). ***")
+        
+        super().keyPressEvent(event) # Call base class implementation for other keys or if paste not handled
+
+    def insertFromMimeData(self, source: QMimeData):
+        # This method might be called by context menu paste or other non-keyPressEvent actions
+        print("\n*** MARKNOTE PASTE DEBUG: insertFromMimeData CALLED (e.g., by context menu) ***")
+        if not self._process_pasted_data(source):
+            print("Fallback to default QScintilla paste from insertFromMimeData (as _process_pasted_data returned False).")
+            super().insertFromMimeData(source) # Fallback to default behavior
+        else:
+            print("Paste handled by _process_pasted_data via insertFromMimeData call.")
+        print("--- End Paste Event (from insertFromMimeData method execution path) ---")
+    
+    def set_dirty(self, dirty: bool):
+        """Marks the current file as dirty (unsaved changes) or clean."""
+        title = self.windowTitle()
+        # Remove existing dirty marker if present
+        if title.endswith(" *"):
+            title = title[:-2]
+        
+        if dirty:
+            self.setWindowTitle(title + " *")
+        else:
+            self.setWindowTitle(title)
+        
+        # You might also want to enable/disable save actions here
+        # For example: self.save_action.setEnabled(dirty)
+
     def clear(self):
         """Clears all text from the editor."""
-        self.setText("")
+        self.setText("")                
 
 class MarkdownPreview(QWebEngineView):
     """
@@ -725,7 +872,7 @@ class MainWindow(QMainWindow):
 
     def _init_editor_preview_splitter(self):
         """Initializes the Markdown editor, preview pane, and the QSplitter that manages them."""
-        self.editor = MarkdownEditor()
+        self.editor = MarkdownEditor(parent=self, main_window=self)
         self.preview = MarkdownPreview()
         self.editor.textChanged.connect(self.update_preview) # Update preview on text change
 
@@ -784,6 +931,23 @@ class MainWindow(QMainWindow):
         # Connect key press event for Ctrl+Enter functionality
         self.command_bar.keyPressEvent = self.command_bar_key_press_event
 
+    def _get_unique_filename(self, directory: Path, original_filename: str) -> Path:
+        """
+        Generates a unique filename in the given directory.
+        If 'original_filename' exists, appends a counter (e.g., image_1.png).
+        """
+        filepath = directory / original_filename
+        if not filepath.exists():
+            return filepath
+
+        name, ext = os.path.splitext(original_filename)
+        counter = 1
+        while True:
+            new_filename = f"{name}_{counter}{ext}"
+            new_filepath = directory / new_filename
+            if not new_filepath.exists():
+                return new_filepath
+            counter += 1
 
     def update_preview(self):
         """Updates the Markdown preview pane with the current editor content."""
@@ -900,8 +1064,24 @@ class MainWindow(QMainWindow):
             self.setWindowTitle(f"Marknote - {path.name}") # Update window title
             self.save_last_note(str(path)) # Update last opened note in config
             self.update_preview() # <-- ensure preview is updated with correct base_url
+            self.set_dirty(False) # Reset dirty state
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to open file: {e}")
+    
+    def set_dirty(self, dirty: bool):
+        """Marks the current file as dirty (unsaved changes) or clean."""
+        title = self.windowTitle()
+        # Remove existing dirty marker if present
+        if title.endswith(" *"):
+            title = title[:-2]
+        
+        if dirty:
+            self.setWindowTitle(title + " *")
+        else:
+            self.setWindowTitle(title)
+        
+        # You might also want to enable/disable save actions here
+        # For example: self.save_action.setEnabled(dirty)
 
     def save_file(self):
         """Saves the current content of the editor to the current_file path."""
@@ -915,6 +1095,7 @@ class MainWindow(QMainWindow):
                 
                 self.recent_files_manager.add_to_recent_files(self.current_file)
                 self.update_recent_files_menu()
+                self.set_dirty(False) # Reset dirty state
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Failed to save file: {e}")
         else:
@@ -1037,6 +1218,7 @@ class MainWindow(QMainWindow):
             self.setWindowTitle("Marknote - Untitled")
             self.preview.set_markdown("")
             # Do not add to recent files until saved with a name and path.
+            self.set_dirty(False) # Reset dirty state
 
     def maybe_save_changes(self) -> bool:
         """
@@ -1574,6 +1756,132 @@ class MainWindow(QMainWindow):
                 save_app_config(config)
             print(f"Warning: Attempted to save an invalid path for last note: {path_str}")
 
+    def handle_pasted_image_url(self, url: str):
+        print(f"*** MARKNOTE PASTE DEBUG: handle_pasted_image_url CALLED with URL: {url}")
+        if not self.current_file:
+            QMessageBox.warning(self, "Save Note First", 
+                                "Please save your note before pasting an image URL. "
+                                "The image will be saved relative to the note's location.")
+            # Fallback: insert the URL as plain text or a simple Markdown link
+            alt_text, ok = QInputDialog.getText(self, "Link Text", f"Note not saved. Enter link text for {url}:", text=url.split('/')[-1])
+            if ok:
+                self.editor.insert(f"[{alt_text}]({url})")
+            else:
+                self.editor.insert(url)
+            self.set_dirty(True)
+            self.update_preview()
+            return
+
+        try:
+            current_note_path = Path(self.current_file)
+            assets_dir = current_note_path.parent / "_assets"
+            assets_dir.mkdir(parents=True, exist_ok=True) # Ensure _assets directory exists
+
+            print(f"*** MARKNOTE PASTE DEBUG: Downloading image from {url}")
+            response = requests.get(url, timeout=10, stream=True)
+            response.raise_for_status() # Check for HTTP errors
+
+            # Determine a good filename
+            parsed_qurl = QUrl(url)
+            original_url_filename_str = Path(parsed_qurl.fileName()).name # Try to get filename from URL
+            if not original_url_filename_str: # If URL path ends in / or is just domain, or fileName() is empty
+                original_url_filename_str = "pasted_image" # Default base name
+
+            # Ensure it has an extension
+            name_part, ext_part = os.path.splitext(original_url_filename_str)
+            if not name_part: # if original_url_filename_str was just ".png"
+                name_part = "pasted_image"
+            
+            image_extensions_map = {
+                'image/jpeg': '.jpg', 'image/jpg': '.jpg',
+                'image/png': '.png',
+                'image/gif': '.gif',
+                'image/webp': '.webp',
+                'image/svg+xml': '.svg',
+                'image/bmp': '.bmp'
+            }
+            
+            # Prefer extension from Content-Type if available and valid
+            content_type = response.headers.get('Content-Type', '').lower().split(';')[0].strip()
+            if content_type in image_extensions_map:
+                ext_part = image_extensions_map[content_type]
+            elif not ext_part.lower() in image_extensions_map.values(): # If original ext is not a known image ext
+                ext_part = '.png' # Default to .png if no better extension found
+
+            filename_for_saving = name_part + ext_part
+            
+            # Get a unique filepath in the _assets directory
+            local_filepath = self._get_unique_filename(assets_dir, filename_for_saving)
+            print(f"*** MARKNOTE PASTE DEBUG: Saving image to {local_filepath}")
+
+            # Save the downloaded image content to the file
+            # This is where Path.replace() was likely misused. We use open() and write().
+            with open(local_filepath, 'wb') as f:
+                for chunk in response.iter_content(chunk_size=8192): # Stream content
+                    f.write(chunk)
+            
+            print(f"*** MARKNOTE PASTE DEBUG: Image saved successfully to {local_filepath}")
+
+            # Prompt for alt text
+            alt_text, ok = QInputDialog.getText(self, "Image Alt Text", "Enter alt text for the image:", text=name_part)
+            if ok:
+                # Use relative path for Markdown image tag
+                relative_path = Path(assets_dir.name) / local_filepath.name
+                markdown_image_tag = f"![{alt_text}]({relative_path.as_posix()})" # Use as_posix() for cross-platform slashes
+                self.editor.insert(markdown_image_tag)
+                self.set_dirty(True)
+                self.update_preview()
+            else:
+                # User cancelled alt text input, clean up downloaded file
+                print("*** MARKNOTE PASTE DEBUG: Alt text cancelled, removing downloaded image and inserting URL as link.")
+                local_filepath.unlink(missing_ok=True) # Remove the downloaded file
+                # Fallback to inserting as a plain link
+                link_text_fallback, link_ok = QInputDialog.getText(self, "Link Text", f"Alt text cancelled. Enter link text for {url}:", text=url.split('/')[-1])
+                if link_ok:
+                    self.editor.insert(f"[{link_text_fallback}]({url})")
+                else:
+                    self.editor.insert(url) # Insert plain URL if link text also cancelled
+                self.set_dirty(True)
+                self.update_preview()
+
+        except requests.RequestException as e:
+            print(f"Error downloading image {url}: {e}")
+            QMessageBox.warning(self, "Download Error", f"Failed to download image: {e}\n\nURL will be pasted as plain text.")
+            self.editor.insert(url) # Insert plain URL on download error
+            self.set_dirty(True)
+            self.update_preview()
+            return
+        except IOError as e:
+            print(f"Error saving image: {e}") # Error during file open/write
+            QMessageBox.warning(self, "File Error", f"Failed to save image: {e}\n\nURL will be pasted as plain text.")
+            self.editor.insert(url) # Insert plain URL on save error
+            self.set_dirty(True)
+            self.update_preview()
+            return
+        except Exception as e:
+            # Catch any other unexpected errors during the process
+            print(f"An unexpected error occurred while processing the image URL {url}: {e}")
+            import traceback
+            print(traceback.format_exc()) # Print full traceback to console for debugging
+            QMessageBox.critical(self, "Unexpected Error", f"An unexpected error occurred while processing the image URL: {e}\n\nURL will be pasted as plain text.")
+            self.editor.insert(url) # Insert plain URL on unexpected error
+            self.set_dirty(True)
+            self.update_preview()
+            return
+
+    def handle_pasted_plain_url(self, url: str):
+        # For now, prompt for link text. AI part is a future enhancement.
+        link_text_default = QUrl(url).host() or "Pasted Link" # Suggest domain or generic text
+        link_text, ok = QInputDialog.getText(self, "Insert Link", "Enter link text:", 
+                                            QLineEdit.EchoMode.Normal, link_text_default)
+        if ok and link_text.strip():
+            self.editor.insert(f"[{link_text.strip()}]({url})")
+            self.set_dirty(True)
+        else:
+            # If user cancels or enters no text, insert the URL as is, not as a link.
+            self.editor.insert(url)
+            self.set_dirty(True)
+
     def load_last_note(self):
         """Loads the last opened note if its path is stored in the configuration."""
         config = load_app_config()
@@ -1731,7 +2039,7 @@ class MainWindow(QMainWindow):
                     md = f'![image]({rel_path})'
                     self.editor.insert(md)
         self.update_preview()
-
+        self.set_dirty(True) # Mark as dirty after image insertion
 
 if __name__ == "__main__":
     # Standard PyQt application setup
