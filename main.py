@@ -17,7 +17,8 @@ import tempfile
 from config_utils import (
     load_app_config, save_app_config,
     CONFIG_KEY_DEFAULT_NOTES_FOLDER, CONFIG_KEY_LAST_NOTE,
-    CONFIG_FILE_NAME, CONFIG_KEY_GEMINI_API_KEY, CONFIG_KEY_EDITOR_FONT_FAMILY, CONFIG_KEY_EDITOR_FONT_SIZE
+    CONFIG_FILE_NAME, CONFIG_KEY_GEMINI_API_KEY, CONFIG_KEY_EDITOR_FONT_FAMILY, CONFIG_KEY_EDITOR_FONT_SIZE,
+    CONFIG_KEY_PREVIEW_PANE_VISIBLE
 )
 
 import PyQt6.QtCore # For version diagnostics
@@ -516,6 +517,13 @@ class MainWindow(QMainWindow):
         self._init_library_panel() # Must be called before _init_editor_preview_splitter if splitter uses library_panel
         self._init_editor_preview_splitter()
         self._init_command_bar()
+
+        # Load and apply preview pane visibility state
+        config = load_app_config()
+        is_preview_visible = config.get(CONFIG_KEY_PREVIEW_PANE_VISIBLE, True) # Default to True if not found
+        self.preview.setVisible(is_preview_visible)
+        if hasattr(self, 'toggle_preview_action'): # Ensure action exists
+            self.toggle_preview_action.setChecked(is_preview_visible)
         
         # Finalize UI setup (central widget, layout)
         self._setup_central_widget() 
@@ -524,6 +532,16 @@ class MainWindow(QMainWindow):
         self.recent_files_manager = RecentFilesManager()
         self.load_last_note() # Load the last opened note
         self.update_recent_files_menu() # Populate the "Open Recent" menu
+
+    def _toggle_preview_pane(self):
+        """Toggles the visibility of the HTML preview pane and saves the state."""
+        is_visible = not self.preview.isVisible()
+        self.preview.setVisible(is_visible)
+        self.toggle_preview_action.setChecked(is_visible)
+        
+        config = load_app_config()
+        config[CONFIG_KEY_PREVIEW_PANE_VISIBLE] = is_visible
+        save_app_config(config)
 
     def print_document(self):
         """Show HTML preview dialog and let user print via browser's print dialog."""
@@ -596,7 +614,7 @@ class MainWindow(QMainWindow):
             event.accept() # Proceed with closing
 
     def _init_menubar(self):
-        """Initializes the main menubar and its menus (File, Other, Help)."""
+        """Initializes the main menubar and its menus (File, View, Other, Help)."""
         menubar = self.menuBar()
         menubar.setStyleSheet(self.MENUBAR_STYLESHEET)
 
@@ -650,6 +668,12 @@ class MainWindow(QMainWindow):
         export_as_action = QAction("Export As...", self)
         export_as_action.triggered.connect(self.export_file_as)
         file_menu.addAction(export_as_action)
+
+        # View Menu
+        view_menu = menubar.addMenu("&View")
+        self.toggle_preview_action = QAction("Toggle Preview Pane", self, checkable=True)
+        self.toggle_preview_action.triggered.connect(self._toggle_preview_pane)
+        view_menu.addAction(self.toggle_preview_action)
 
         # Only create 'Other' menu once
         if not hasattr(self, 'other_menu'):
