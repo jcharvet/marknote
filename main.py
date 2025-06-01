@@ -24,7 +24,7 @@ from config_utils import (
 
 import PyQt6.QtCore # For version diagnostics
 import PyQt6.QtWebEngineCore # For version diagnostics
-from PyQt6.QtCore import Qt, QTimer, QEventLoop, QEvent, QPoint, QByteArray, QMimeData, QUrl # Added QByteArray, QMimeData, QUrl
+from PyQt6.QtCore import Qt, QTimer, QEventLoop, QEvent, QPoint, QByteArray, QMimeData, QUrl, pyqtSignal # Added QByteArray, QMimeData, QUrl, pyqtSignal
 from PyQt6.QtGui import QAction, QKeySequence, QFont, QColor, QTextCharFormat, QTextCursor, QDesktopServices, QIcon, QPalette, QKeyEvent
 from PyQt6.QtWidgets import (
     QApplication, QFileDialog, QHBoxLayout, QInputDialog, QLineEdit,
@@ -110,6 +110,8 @@ class MarkdownEditor(QsciScintilla):
     and other editor features like auto-indent and folding.
     It also handles smart pasting of URLs.
     """
+    contentChanged = pyqtSignal()  # Add signal at class level
+
     def __init__(self, parent=None, main_window=None):
         """
         Initializes the MarkdownEditor.
@@ -121,6 +123,7 @@ class MarkdownEditor(QsciScintilla):
         super().__init__(parent)
         self.main_window = main_window
         self._configure_editor()
+        self.textChanged.connect(self._on_text_changed)
 
     def _configure_editor(self):
         """Sets up the editor's appearance and behavior."""
@@ -170,6 +173,8 @@ class MarkdownEditor(QsciScintilla):
         # Ensure base styling for the widget itself
         self.setStyleSheet("background-color: #282c34; color: #d7dae0;")
 
+    def _on_text_changed(self):
+        self.contentChanged.emit()
 
     def toPlainText(self) -> str:
         """
@@ -827,7 +832,7 @@ class MainWindow(QMainWindow):
         """Initializes the Markdown editor, preview pane, and the QSplitter that manages them."""
         self.editor = MarkdownEditor(parent=self, main_window=self)
         self.preview = MarkdownPreview()
-        self.editor.textChanged.connect(self.update_preview) # Update preview on text change
+        self.editor.contentChanged.connect(self._on_editor_content_changed)
 
         # The main splitter that divides the library panel from the editor/preview area
         self.splitter = QSplitter(Qt.Orientation.Horizontal) # Explicitly horizontal
@@ -902,19 +907,26 @@ class MainWindow(QMainWindow):
                 return new_filepath
             counter += 1
 
-    def update_preview(self):
-        """Updates the Markdown preview pane with the current editor content."""
-        if not self.current_file or not Path(self.current_file).is_file():
-            self.preview.set_markdown("", base_url=QUrl())
-            return
-        text = self.editor.toPlainText()
-        base_url = QUrl()
-        try:
-            file_path = Path(self.current_file)
-            base_url = QUrl.fromLocalFile(str(file_path.parent.resolve()) + os.sep)
-        except Exception as e:
-            print(f"Error determining base_url for {self.current_file}: {e}")
-        self.preview.set_markdown(text, base_url=base_url)
+    def _on_editor_content_changed(self):
+        is_dirty = self.editor.toPlainText() != self.last_saved_text
+        self.set_dirty(is_dirty)
+        self.update_preview()
+
+    def _update_window_title(self, filename: str | None = None, dirty: bool = False):
+        if filename:
+            base_title = f"Marknote - {Path(filename).name}"
+        else:
+            base_title = "Marknote - Untitled"
+        self.setWindowTitle(f"{base_title}{' *' if dirty else ''}")
+
+    def _update_file_state(self, content: str, filepath: str | None = None, dirty: bool = False):
+        self.last_saved_text = content
+        self.current_file = filepath
+        self._update_window_title(filepath, dirty)
+        self.update_preview()
+
+    def set_dirty(self, dirty: bool):
+        self._update_window_title(self.current_file, dirty)
 
     def open_file(self, file_path: str | None = None):
         """
@@ -941,11 +953,7 @@ class MainWindow(QMainWindow):
                     content = f.read()
                 
                 self.editor.setPlainText(content)
-                self.current_file = resolved_path
-                self.last_saved_text = content # Update last saved text to current content
-                self.setWindowTitle(f"Marknote - {Path(resolved_path).name}") # Update window title
-                self.update_preview() # <-- ensure preview is updated with correct base_url
-                
+                self._update_file_state(content, resolved_path, False)
                 self.recent_files_manager.add_to_recent_files(resolved_path)
                 self.update_recent_files_menu()
             except Exception as e:
@@ -1012,30 +1020,13 @@ class MainWindow(QMainWindow):
                 content = f.read()
             
             self.editor.setPlainText(content)
-            self.last_saved_text = content
-            self.current_file = str(path)
-            self.setWindowTitle(f"Marknote - {path.name}") # Update window title
+            self._update_file_state(content, str(path), False)
             self.save_last_note(str(path)) # Update last opened note in config
             self.update_preview() # <-- ensure preview is updated with correct base_url
             self.set_dirty(False) # Reset dirty state
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to open file: {e}")
     
-    def set_dirty(self, dirty: bool):
-        """Marks the current file as dirty (unsaved changes) or clean."""
-        title = self.windowTitle()
-        # Remove existing dirty marker if present
-        if title.endswith(" *"):
-            title = title[:-2]
-        
-        if dirty:
-            self.setWindowTitle(title + " *")
-        else:
-            self.setWindowTitle(title)
-        
-        # You might also want to enable/disable save actions here
-        # For example: self.save_action.setEnabled(dirty)
-
     def save_file(self):
         """Saves the current content of the editor to the current_file path."""
         text_content = self.editor.toPlainText()
@@ -1043,9 +1034,7 @@ class MainWindow(QMainWindow):
             try:
                 with open(self.current_file, "w", encoding="utf-8") as f:
                     f.write(text_content)
-                self.last_saved_text = text_content # Update last saved state
-                self.setWindowTitle(f"Marknote - {Path(self.current_file).name}") # Ensure title is correct
-                
+                self._update_file_state(text_content, self.current_file, False)
                 self.recent_files_manager.add_to_recent_files(self.current_file)
                 self.update_recent_files_menu()
                 self.set_dirty(False) # Reset dirty state
@@ -1166,12 +1155,7 @@ class MainWindow(QMainWindow):
         """Creates a new, empty file in the editor."""
         if self.maybe_save_changes():
             self.editor.clear()
-            self.current_file = None # No associated file path yet
-            self.last_saved_text = "" # Treat as unsaved
-            self.setWindowTitle("Marknote - Untitled")
-            self.preview.set_markdown("")
-            # Do not add to recent files until saved with a name and path.
-            self.set_dirty(False) # Reset dirty state
+            self._update_file_state("", None, False)
 
     def maybe_save_changes(self) -> bool:
         """
@@ -1295,7 +1279,7 @@ class MainWindow(QMainWindow):
                 # If the currently open file was renamed, update its path
                 if self.current_file == str(path):
                     self.current_file = str(new_path)
-                    self.setWindowTitle(f"Marknote - {new_path.name}")
+                    self._update_window_title(new_path)
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Failed to rename: {e}")
 
@@ -1503,9 +1487,11 @@ class MainWindow(QMainWindow):
         else:
             # Append at the end of the document, ensuring a newline if needed
             current_doc_text = self.editor.toPlainText()
-            if current_doc_text and not current_doc_text.endswith("\n\n"):
-                self.editor.appendText("\n\n" if not current_doc_text.endswith("\n") else "\n")
-            self.editor.appendText(ai_result)
+            if not current_doc_text.endswith("\n"):
+                self.editor.insert("\n\n")
+            else:
+                self.editor.insert("\n")
+            self.editor.insert(ai_result)
 
 
     def update_recent_files_menu(self):
@@ -2101,6 +2087,20 @@ class MainWindow(QMainWindow):
                     self.editor.insert(md)
         self.update_preview()
         self.set_dirty(True) # Mark as dirty after image insertion
+
+    def update_preview(self):
+        """Updates the Markdown preview pane with the current editor content."""
+        if not self.current_file or not Path(self.current_file).is_file():
+            self.preview.set_markdown("", base_url=QUrl())
+            return
+        text = self.editor.toPlainText()
+        base_url = QUrl()
+        try:
+            file_path = Path(self.current_file)
+            base_url = QUrl.fromLocalFile(str(file_path.parent.resolve()) + os.sep)
+        except Exception as e:
+            print(f"Error determining base_url for {self.current_file}: {e}")
+        self.preview.set_markdown(text, base_url=base_url)
 
 if __name__ == "__main__":
     # Standard PyQt application setup
