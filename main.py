@@ -291,21 +291,6 @@ class MarkdownEditor(QsciScintilla):
         else:
             print("Paste handled by _process_pasted_data via insertFromMimeData call.")
         print("--- End Paste Event (from insertFromMimeData method execution path) ---")
-    
-    def set_dirty(self, dirty: bool):
-        """Marks the current file as dirty (unsaved changes) or clean."""
-        title = self.windowTitle()
-        # Remove existing dirty marker if present
-        if title.endswith(" *"):
-            title = title[:-2]
-        
-        if dirty:
-            self.setWindowTitle(title + " *")
-        else:
-            self.setWindowTitle(title)
-        
-        # You might also want to enable/disable save actions here
-        # For example: self.save_action.setEnabled(dirty)
 
     def clear(self):
         """Clears all text from the editor."""
@@ -790,75 +775,6 @@ class MainWindow(QMainWindow):
         syntax_action = QAction("Markdown & Mermaid Syntax", self)
         syntax_action.triggered.connect(self.show_syntax_help)
         help_menu.addAction(syntax_action)
-
-
-    def _init_library_panel(self):
-        """Initializes the document library panel on the left."""
-        self.library_panel = QWidget() # Store as instance variable
-        library_layout = QVBoxLayout()
-        library_layout.setContentsMargins(0, 0, 0, 0) # No external margins
-        self.library_panel.setLayout(library_layout)
-
-        # Search bar for filtering library items
-        self.search_bar = QLineEdit()
-        self.search_bar.setPlaceholderText("Search documents...")
-        self.search_bar.textChanged.connect(self.filter_library)
-        library_layout.addWidget(self.search_bar)
-
-        # Button to create a new folder
-        self.folder_btn = QPushButton("New Folder")
-        self.folder_btn.clicked.connect(self.create_folder)
-        self.folder_btn.setStyleSheet("background: #282c34; color: #98c379; border: none; padding: 5px;")
-        library_layout.addWidget(self.folder_btn)
-
-        # Tree widget to display files and folders
-        self.library = QTreeWidget()
-        self.library.setHeaderHidden(True) # No header for the tree
-        self.library.setStyleSheet("background: #23252b; color: #61AFEF; font-size: 13px; border: none;") # Themed
-        self.library.setMaximumWidth(210) # Limit width of library panel
-        self.library.itemClicked.connect(self.open_tree_item)
-        # Enable custom context menu for library items (e.g., rename, delete)
-        self.library.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self.library.customContextMenuRequested.connect(self.show_library_context_menu)
-        library_layout.addWidget(self.library)
-        
-        self.refresh_library() # Initial population of the library
-
-    def _init_editor_preview_splitter(self):
-        """Initializes the Markdown editor, preview pane, and the splitter managing them."""
-        self.editor = MarkdownEditor()
-        self.preview = MarkdownPreview()
-        """
-        Initializes the main UI components of the application.
-        This method sets the overall dark palette and then calls helper methods
-        to initialize specific parts of the UI like menubar, library panel, etc.
-        It's now primarily responsible for setting up the central widget and layout.
-        """
-        # Set a dark color palette for the application
-        palette = QPalette()
-        palette.setColor(QPalette.ColorRole.Window, QColor("#282c34"))
-        palette.setColor(QPalette.ColorRole.WindowText, QColor("#d7dae0"))
-        # ... (set other colors for a complete dark theme if needed)
-        self.setPalette(palette)
-
-        # The individual UI components (menubar, library, editor, etc.) are
-        # initialized by their respective _init_* methods called from __init__.
-        # This method, init_ui, is now more about assembling the central structure.
-        self._setup_central_widget()
-        
-        self.update_preview() # Initial preview update
-
-        # Add toolbar button for image insertion
-        if hasattr(self, 'toolbar'):
-            self.toolbar.addAction(QAction(QIcon(), "Insert Image...", self, triggered=self.insert_image))
-
-        # Override keyPressEvent for Enter/Return
-        orig_keyPressEvent = self.editor.keyPressEvent
-        def custom_keyPressEvent(event):
-            if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
-                self.update_preview()
-            orig_keyPressEvent(event)
-        self.editor.keyPressEvent = custom_keyPressEvent
 
     def _setup_central_widget(self):
         """
