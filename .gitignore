@@ -17,6 +17,7 @@ build/
 *.sqlite3
 
 # User-specific files not to share publicly
+docs/
 docs/plan.md
 Sportskred/
 config.json
