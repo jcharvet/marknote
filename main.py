@@ -14,6 +14,8 @@ import textwrap
 import shutil
 import tempfile
 import logging
+import hashlib
+import secrets
 
 from config_utils import (
     load_app_config, save_app_config,
@@ -906,6 +908,22 @@ class MainWindow(QMainWindow):
             if not new_filepath.exists():
                 return new_filepath
             counter += 1
+
+    def _get_unique_asset_filename(self, directory: Path, ext: str) -> Path:
+        """
+        Generates a unique filename in the given directory using a random hash.
+        Args:
+            directory (Path): The directory to save the file in.
+            ext (str): The file extension (with dot), e.g., '.png'.
+        Returns:
+            Path: The full path to a unique file.
+        """
+        while True:
+            rand_hash = secrets.token_urlsafe(12)
+            filename = f"{rand_hash}{ext}"
+            filepath = directory / filename
+            if not filepath.exists():
+                return filepath
 
     def _on_editor_content_changed(self):
         is_dirty = self.editor.toPlainText() != self.last_saved_text
@@ -1809,7 +1827,6 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Save Note First", 
                                 "Please save your note before pasting an image URL. "
                                 "The image will be saved relative to the note's location.")
-            # Fallback: insert the URL as plain text or a simple Markdown link
             alt_text, ok = QInputDialog.getText(self, "Link Text", f"Note not saved. Enter link text for {url}:", text=url.split('/')[-1])
             if ok:
                 self.editor.insert(f"[{alt_text}]({url})")
@@ -1821,24 +1838,18 @@ class MainWindow(QMainWindow):
 
         try:
             current_note_path = Path(self.current_file)
-            assets_dir = current_note_path.parent / "_assets"
-            assets_dir.mkdir(parents=True, exist_ok=True) # Ensure _assets directory exists
+            assets_dir = current_note_path.parent / "_assets" / "images"
+            assets_dir.mkdir(parents=True, exist_ok=True)
 
             print(f"*** MARKNOTE PASTE DEBUG: Downloading image from {url}")
             response = requests.get(url, timeout=10, stream=True)
-            response.raise_for_status() # Check for HTTP errors
+            response.raise_for_status()
 
-            # Determine a good filename
+            # Determine extension from Content-Type or URL
             parsed_qurl = QUrl(url)
-            original_url_filename_str = Path(parsed_qurl.fileName()).name # Try to get filename from URL
-            if not original_url_filename_str: # If URL path ends in / or is just domain, or fileName() is empty
-                original_url_filename_str = "pasted_image" # Default base name
-
-            # Ensure it has an extension
-            name_part, ext_part = os.path.splitext(original_url_filename_str)
-            if not name_part: # if original_url_filename_str was just ".png"
-                name_part = "pasted_image"
-            
+            url_path = parsed_qurl.path().lower()
+            url_ext = os.path.splitext(url_path)[1]
+            image_extensions = {'.png', '.jpg', '.jpeg', '.gif', '.bmp', '.svg', '.webp'}
             image_extensions_map = {
                 'image/jpeg': '.jpg', 'image/jpg': '.jpg',
                 'image/png': '.png',
@@ -1847,71 +1858,61 @@ class MainWindow(QMainWindow):
                 'image/svg+xml': '.svg',
                 'image/bmp': '.bmp'
             }
-            
-            # Prefer extension from Content-Type if available and valid
             content_type = response.headers.get('Content-Type', '').lower().split(';')[0].strip()
             if content_type in image_extensions_map:
-                ext_part = image_extensions_map[content_type]
-            elif not ext_part.lower() in image_extensions_map.values(): # If original ext is not a known image ext
-                ext_part = '.png' # Default to .png if no better extension found
+                ext = image_extensions_map[content_type]
+            elif url_ext in image_extensions:
+                ext = url_ext
+            else:
+                ext = '.png'  # fallback
 
-            filename_for_saving = name_part + ext_part
-            
-            # Get a unique filepath in the _assets directory
-            local_filepath = self._get_unique_filename(assets_dir, filename_for_saving)
+            local_filepath = self._get_unique_asset_filename(assets_dir, ext)
             print(f"*** MARKNOTE PASTE DEBUG: Saving image to {local_filepath}")
 
-            # Save the downloaded image content to the file
-            # This is where Path.replace() was likely misused. We use open() and write().
             with open(local_filepath, 'wb') as f:
-                for chunk in response.iter_content(chunk_size=8192): # Stream content
+                for chunk in response.iter_content(chunk_size=8192):
                     f.write(chunk)
-            
+
             print(f"*** MARKNOTE PASTE DEBUG: Image saved successfully to {local_filepath}")
 
-            # Prompt for alt text
-            alt_text, ok = QInputDialog.getText(self, "Image Alt Text", "Enter alt text for the image:", text=name_part)
+            alt_text, ok = QInputDialog.getText(self, "Image Alt Text", "Enter alt text for the image:", text=local_filepath.stem)
             if ok:
-                # Use relative path for Markdown image tag
-                relative_path = Path(assets_dir.name) / local_filepath.name
-                markdown_image_tag = f"![{alt_text}]({relative_path.as_posix()})" # Use as_posix() for cross-platform slashes
+                relative_path = Path("_assets") / "images" / local_filepath.name
+                markdown_image_tag = f"![{alt_text}]({relative_path.as_posix()})"
                 self.editor.insert(markdown_image_tag)
                 self.set_dirty(True)
                 self.update_preview()
             else:
-                # User cancelled alt text input, clean up downloaded file
                 print("*** MARKNOTE PASTE DEBUG: Alt text cancelled, removing downloaded image and inserting URL as link.")
-                local_filepath.unlink(missing_ok=True) # Remove the downloaded file
-                # Fallback to inserting as a plain link
+                local_filepath.unlink(missing_ok=True)
                 link_text_fallback, link_ok = QInputDialog.getText(self, "Link Text", f"Alt text cancelled. Enter link text for {url}:", text=url.split('/')[-1])
                 if link_ok:
                     self.editor.insert(f"[{link_text_fallback}]({url})")
                 else:
-                    self.editor.insert(url) # Insert plain URL if link text also cancelled
+                    self.editor.insert(url)
                 self.set_dirty(True)
                 self.update_preview()
 
         except requests.RequestException as e:
             print(f"Error downloading image {url}: {e}")
             QMessageBox.warning(self, "Download Error", f"Failed to download image: {e}\n\nURL will be pasted as plain text.")
-            self.editor.insert(url) # Insert plain URL on download error
+            self.editor.insert(url)
             self.set_dirty(True)
             self.update_preview()
             return
         except IOError as e:
-            print(f"Error saving image: {e}") # Error during file open/write
+            print(f"Error saving image: {e}")
             QMessageBox.warning(self, "File Error", f"Failed to save image: {e}\n\nURL will be pasted as plain text.")
-            self.editor.insert(url) # Insert plain URL on save error
+            self.editor.insert(url)
             self.set_dirty(True)
             self.update_preview()
             return
         except Exception as e:
-            # Catch any other unexpected errors during the process
             print(f"An unexpected error occurred while processing the image URL {url}: {e}")
             import traceback
-            print(traceback.format_exc()) # Print full traceback to console for debugging
+            print(traceback.format_exc())
             QMessageBox.critical(self, "Unexpected Error", f"An unexpected error occurred while processing the image URL: {e}\n\nURL will be pasted as plain text.")
-            self.editor.insert(url) # Insert plain URL on unexpected error
+            self.editor.insert(url)
             self.set_dirty(True)
             self.update_preview()
             return
@@ -1964,51 +1965,41 @@ class MainWindow(QMainWindow):
         # self.editor.SendScintilla(self.editor.SCI_SETSEL, current_pos - len(template) + 1, current_pos - len(template) + 1 + len("Link Text"))
 
     def insert_image(self):
-        # Ask user: file or URL?
         mode, ok = QInputDialog.getItem(self, "Insert Image", "Choose image source:", ["File", "URL"], 0, False)
         if not ok:
             return
+        current_note_path = Path(self.current_file) if self.current_file else Path.cwd()
+        assets_dir = current_note_path.parent / "_assets" / "images"
+        assets_dir.mkdir(parents=True, exist_ok=True)
         if mode == "File":
             file_path, _ = QFileDialog.getOpenFileName(self, "Select Image File", "", "Images (*.png *.jpg *.jpeg *.gif *.bmp *.webp)")
             if not file_path:
                 return
-            # Ask for width/height (optional)
             width, ok_w = QInputDialog.getInt(self, "Image Width (optional)", "Width (px, 0 for original):", 0, 0)
             if not ok_w:
                 return
             height, ok_h = QInputDialog.getInt(self, "Image Height (optional)", "Height (px, 0 for original):", 0, 0)
             if not ok_h:
                 return
-            # Copy image to images/ folder in note's directory
-            note_dir = os.path.dirname(self.current_file) if self.current_file else os.getcwd()
-            images_dir = os.path.join(note_dir, "images")
-            os.makedirs(images_dir, exist_ok=True)
-            base_name = os.path.basename(file_path)
-            dest_path = os.path.join(images_dir, base_name)
-            # Avoid overwrite
-            i = 1
-            name, ext = os.path.splitext(base_name)
-            while os.path.exists(dest_path):
-                dest_path = os.path.join(images_dir, f"{name}_{i}{ext}")
-                i += 1
-            # Resize if needed
+            ext = os.path.splitext(file_path)[1].lower()
+            if ext not in {'.png', '.jpg', '.jpeg', '.gif', '.bmp', '.svg', '.webp'}:
+                ext = '.png'
+            local_filepath = self._get_unique_asset_filename(assets_dir, ext)
             if width > 0 or height > 0:
                 img = Image.open(file_path)
                 orig_w, orig_h = img.size
                 new_w = width if width > 0 else orig_w
                 new_h = height if height > 0 else orig_h
                 img = img.resize((new_w, new_h), Image.LANCZOS)
-                img.save(dest_path)
+                img.save(local_filepath)
             else:
-                shutil.copy2(file_path, dest_path)
-            # When saving the image, always use forward slashes for rel_path
-            rel_path = os.path.relpath(dest_path, note_dir).replace("\\", "/")
-            # Insert Markdown or HTML
+                shutil.copy2(file_path, local_filepath)
+            rel_path = Path("_assets") / "images" / local_filepath.name
             if width > 0 or height > 0:
-                html = f'<img src="{rel_path}" width="{width if width > 0 else ''}" height="{height if height > 0 else ''}" />'
+                html = f'<img src="{rel_path.as_posix()}" width="{width if width > 0 else ''}" height="{height if height > 0 else ''}" />'
                 self.editor.insert(html)
             else:
-                md = f'![image]({rel_path})'
+                md = f'![image]({rel_path.as_posix()})'
                 self.editor.insert(md)
         else:  # URL
             url, ok = QInputDialog.getText(self, "Insert Image URL", "Image URL:")
@@ -2020,7 +2011,6 @@ class MainWindow(QMainWindow):
             height, ok_h = QInputDialog.getInt(self, "Image Height (optional)", "Height (px, 0 for original):", 0, 0)
             if not ok_h:
                 return
-            # Check if this URL previously failed
             if url in MainWindow.failed_image_downloads:
                 QMessageBox.warning(self, "Image Download Failed", f"Previously failed to download image from URL:\n{url}\nInserting as remote link.")
                 if width > 0 or height > 0:
@@ -2031,31 +2021,34 @@ class MainWindow(QMainWindow):
                     self.editor.insert(md)
                 self.update_preview()
                 return
-            # Try to download the image (first attempt: default headers)
-            note_dir = os.path.dirname(self.current_file) if self.current_file else os.getcwd()
-            images_dir = os.path.join(note_dir, "images")
-            os.makedirs(images_dir, exist_ok=True)
             import urllib.parse
-            base_name = os.path.basename(urllib.parse.urlparse(url).path)
-            if not base_name:
-                base_name = "downloaded_image.png"
-            dest_path = os.path.join(images_dir, base_name)
-            i = 1
-            name, ext = os.path.splitext(base_name)
-            while os.path.exists(dest_path):
-                dest_path = os.path.join(images_dir, f"{name}_{i}{ext}")
-                i += 1
-            success = False
+            url_path = urllib.parse.urlparse(url).path.lower()
+            url_ext = os.path.splitext(url_path)[1]
+            image_extensions = {'.png', '.jpg', '.jpeg', '.gif', '.bmp', '.svg', '.webp'}
             try:
                 resp = requests.get(url, timeout=10)
                 resp.raise_for_status()
-                with open(dest_path, "wb") as f:
+                content_type = resp.headers.get('Content-Type', '').lower().split(';')[0].strip()
+                image_extensions_map = {
+                    'image/jpeg': '.jpg', 'image/jpg': '.jpg',
+                    'image/png': '.png',
+                    'image/gif': '.gif',
+                    'image/webp': '.webp',
+                    'image/svg+xml': '.svg',
+                    'image/bmp': '.bmp'
+                }
+                if content_type in image_extensions_map:
+                    ext = image_extensions_map[content_type]
+                elif url_ext in image_extensions:
+                    ext = url_ext
+                else:
+                    ext = '.png'
+                local_filepath = self._get_unique_asset_filename(assets_dir, ext)
+                with open(local_filepath, "wb") as f:
                     f.write(resp.content)
-                # When saving the image, always use forward slashes for rel_path
-                rel_path = os.path.relpath(dest_path, note_dir).replace("\\", "/")
+                rel_path = Path("_assets") / "images" / local_filepath.name
                 success = True
             except Exception:
-                # Retry with browser-like headers
                 try:
                     headers = {
                         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
@@ -2064,10 +2057,17 @@ class MainWindow(QMainWindow):
                     }
                     resp = requests.get(url, headers=headers, timeout=10)
                     resp.raise_for_status()
-                    with open(dest_path, "wb") as f:
+                    content_type = resp.headers.get('Content-Type', '').lower().split(';')[0].strip()
+                    if content_type in image_extensions_map:
+                        ext = image_extensions_map[content_type]
+                    elif url_ext in image_extensions:
+                        ext = url_ext
+                    else:
+                        ext = '.png'
+                    local_filepath = self._get_unique_asset_filename(assets_dir, ext)
+                    with open(local_filepath, "wb") as f:
                         f.write(resp.content)
-                    # When saving the image, always use forward slashes for rel_path
-                    rel_path = os.path.relpath(dest_path, note_dir).replace("\\", "/")
+                    rel_path = Path("_assets") / "images" / local_filepath.name
                     success = True
                 except Exception as e:
                     MainWindow.failed_image_downloads.add(url)
@@ -2078,15 +2078,17 @@ class MainWindow(QMainWindow):
                     else:
                         md = f'![image]({url})'
                         self.editor.insert(md)
-            if success:
-                if width > 0 or height > 0:
-                    html = f'<img src="{rel_path}" width="{width if width > 0 else ''}" height="{height if height > 0 else ''}" />'
-                    self.editor.insert(html)
-                else:
-                    md = f'![image]({rel_path})'
-                    self.editor.insert(md)
+                    self.update_preview()
+                    self.set_dirty(True)
+                    return
+            if width > 0 or height > 0:
+                html = f'<img src="{rel_path.as_posix()}" width="{width if width > 0 else ''}" height="{height if height > 0 else ''}" />'
+                self.editor.insert(html)
+            else:
+                md = f'![image]({rel_path.as_posix()})'
+                self.editor.insert(md)
         self.update_preview()
-        self.set_dirty(True) # Mark as dirty after image insertion
+        self.set_dirty(True)
 
     def update_preview(self):
         """Updates the Markdown preview pane with the current editor content."""
