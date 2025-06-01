@@ -390,7 +390,6 @@ class MarkdownPreview(QWebEngineView):
         self.current_html = full_html
         if base_url:
             self.base_url = base_url
-        print(f"DEBUG: setHtml base_url: {self.base_url.toString()}")
         self.setHtml(self.current_html, baseUrl=self.base_url)
 
 class PrintPreviewDialog(QDialog):
@@ -999,7 +998,6 @@ class MainWindow(QMainWindow):
             base_url = QUrl.fromLocalFile(str(file_path.parent.resolve()) + os.sep)
         except Exception as e:
             print(f"Error determining base_url for {self.current_file}: {e}")
-        print(f"DEBUG: Using base_url for preview: {base_url.toString()}")
         self.preview.set_markdown(text, base_url=base_url)
 
     def open_file(self, file_path: str | None = None):
