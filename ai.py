@@ -282,6 +282,78 @@ For example, if asked to "create a list of planets", respond with "- Mercury\n- 
 """
         return self._gemini_request(prompt, max_tokens=400) # Allow for varied command outputs
 
+    def create_table(self, description: str) -> str:
+        """
+        Generates a Markdown table based on a textual description.
+
+        Args:
+            description (str): A natural language description of the table to create.
+                             (e.g., "a 3-column table for products: Name, Price, Stock")
+
+        Returns:
+            str: The AI-generated Markdown table, or an error message.
+        """
+        prompt = f"""
+You are an AI assistant helping a user create a Markdown table.
+
+The user wants to create a table with the following description:
+---description---
+{description}
+---end description---
+
+Your task is to generate the Markdown code for this table. 
+- Infer column headers and a reasonable number of example rows if not explicitly stated.
+- Ensure the output is valid Markdown.
+- Respond *only* with the Markdown table. Do not include any conversational preamble, explanation, or backticks around the markdown block.
+
+Example if description is "a 2-column table for fruits and their colors with 2 examples":
+| Fruit  | Color  |
+|--------|--------|
+| Apple  | Red    |
+| Banana | Yellow |
+
+Example if description is "a table with User ID, Username, and Email for 3 users":
+| User ID | Username | Email                 |
+|---------|----------|-----------------------|
+| 1       | alice    | alice@example.com     |
+| 2       | bob      | bob@example.com       |
+| 3       | charlie  | charlie@example.com   |
+
+"""
+        # Using a higher max_tokens as tables can be verbose.
+        return self._gemini_request(prompt, max_tokens=600)
+
+    def analyze_table(self, table_markdown: str) -> str:
+        """
+        Analyzes a given Markdown table and provides insights.
+
+        Args:
+            table_markdown (str): The Markdown string of the table to analyze.
+
+        Returns:
+            str: AI-generated analysis of the table, or an error message.
+        """
+        prompt = f"""
+You are an AI data analyst. The user has provided the following Markdown table:
+
+---table---
+{table_markdown}
+---end table---
+
+Your task is to analyze this table and provide insights. Please consider the following:
+1.  **Basic Structure**: Briefly describe the table (e.g., number of rows and columns, column headers).
+2.  **Data Summary**: Provide a concise summary of the data presented. What kind of information does it contain?
+3.  **Potential Patterns/Trends (if any)**: Are there any obvious patterns, trends, or noteworthy data points? (e.g., highest/lowest values, common themes).
+4.  **Possible Insights/Questions**: Based on the table, what are 1-2 interesting insights or questions someone might ask about this data?
+5.  **Data Quality (Optional & Brief)**: If you notice any obvious inconsistencies or potential issues (e.g., mixed data types in a column that looks numeric, missing values), briefly mention them.
+
+Format your response clearly in Markdown. Use headings or bullet points for readability.
+Avoid making up data or performing complex statistical analysis unless explicitly supported by the information present.
+Focus on qualitative insights based on the provided table.
+If the input is not a recognizable table or is too malformed to analyze, please state that.
+"""
+        return self._gemini_request(prompt, max_tokens=500) # Max tokens for a reasonably detailed analysis
+
     def _extract_context(self, text: str, cursor_position: int, window: int = 120) -> str:
         """
         Extracts text around the cursor position to provide context.
