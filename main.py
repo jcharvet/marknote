@@ -13,6 +13,7 @@ import sys
 import textwrap
 import shutil
 import tempfile
+import logging
 
 from config_utils import (
     load_app_config, save_app_config,
@@ -24,7 +25,7 @@ from config_utils import (
 import PyQt6.QtCore # For version diagnostics
 import PyQt6.QtWebEngineCore # For version diagnostics
 from PyQt6.QtCore import Qt, QTimer, QEventLoop, QEvent, QPoint, QByteArray, QMimeData, QUrl # Added QByteArray, QMimeData, QUrl
-from PyQt6.QtGui import QAction, QColor, QFont, QIcon, QKeySequence, QPalette, QKeyEvent
+from PyQt6.QtGui import QAction, QKeySequence, QFont, QColor, QTextCharFormat, QTextCursor, QDesktopServices, QIcon, QPalette, QKeyEvent
 from PyQt6.QtWidgets import (
     QApplication, QFileDialog, QHBoxLayout, QInputDialog, QLineEdit,
     QMainWindow, QMenu, QMessageBox, QPushButton, QSplitter, QTextEdit,
@@ -511,6 +512,7 @@ class MainWindow(QMainWindow):
         # State variables
         self.current_file: str | None = None # Path to the currently open file
         self.last_saved_text: str = ""      # Content of the editor when last saved
+        self.ai: AIMarkdownAssistant | None = None # AI Assistant instance
         
         # Initialize UI components by calling helper methods
         self._init_menubar()
@@ -689,6 +691,10 @@ class MainWindow(QMainWindow):
         insert_image_action = QAction("Insert Image...", self)
         insert_image_action.triggered.connect(self.insert_image)
         other_menu.addAction(insert_image_action)
+
+        ai_create_table_action = QAction("AI Create Table...", self)
+        ai_create_table_action.triggered.connect(self.ai_create_table)
+        other_menu.addAction(ai_create_table_action)
 
         # --- Help Menu ---
         help_menu = menubar.addMenu("Help")
@@ -1304,6 +1310,11 @@ class MainWindow(QMainWindow):
         analyze_action.triggered.connect(self.analyze_document)
         command_bar_action.triggered.connect(self.show_command_bar)
         # nlp_command_action.triggered.connect(self.show_command_bar)
+
+        menu.addSeparator()
+        ai_analyze_table_action = menu.addAction("AI Analyze Table")
+        ai_analyze_table_action.setEnabled(self.editor.hasSelectedText())
+        ai_analyze_table_action.triggered.connect(self.ai_analyze_selected_table)
         
         menu.exec(self.editor.mapToGlobal(position)) # Show menu at global cursor position
 
@@ -1403,6 +1414,80 @@ class MainWindow(QMainWindow):
                 self.editor.setReadOnly(False)
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Failed to create file: {e}")
+
+    def ai_create_table(self):
+        """Prompts user for table description and uses AI to generate and insert it."""
+        if not self.ai:
+            api_key = load_gemini_api_key()
+            if not api_key:
+                QMessageBox.warning(self, "API Key Missing", 
+                                    "Gemini API key not found. Please set it in Preferences.")
+                return
+            self.ai = AIMarkdownAssistant(api_key)
+
+        description, ok = QInputDialog.getText(self, "AI Create Table", 
+                                               "Describe the table you want to create:\n(e.g., 'a 3-column table for products: Name, Price, Stock with 3 examples')")
+
+        if ok and description:
+            try:
+                self.statusBar().showMessage("AI is generating table...", 3000)
+                markdown_table = self.ai.create_table(description)
+                if markdown_table and not markdown_table.startswith("Error:") and not markdown_table.startswith("Failed to get valid response") :
+                    self.editor.insert(markdown_table + "\n") # Add a newline after for spacing
+                    self.statusBar().showMessage("AI table created successfully.", 3000)
+                    self.set_dirty(True)
+                else:
+                    QMessageBox.critical(self, "AI Table Creation Failed", 
+                                         f"Could not generate table. AI response:\n{markdown_table}")
+                    self.statusBar().showMessage("AI table creation failed.", 3000)
+            except Exception as e:
+                logger.error(f"Error during AI table creation: {e}")
+                QMessageBox.critical(self, "AI Error", f"An unexpected error occurred: {e}")
+                self.statusBar().showMessage("Error during AI table creation.", 3000)
+        elif ok: # User pressed OK but provided no description
+            QMessageBox.information(self, "No Description", "Table description cannot be empty.")
+            self.statusBar().showMessage("Table creation cancelled: no description.", 3000)
+        else: # User cancelled
+            self.statusBar().showMessage("Table creation cancelled.", 3000)
+
+    def ai_analyze_selected_table(self):
+        """Analyzes the selected Markdown table using AI and displays insights."""
+        selected_text = self.editor.selectedText()
+        if not selected_text:
+            QMessageBox.information(self, "No Selection", "Please select a Markdown table to analyze.")
+            self.statusBar().showMessage("AI Table Analysis: No text selected.", 3000)
+            return
+
+        if not self.ai:
+            api_key = load_gemini_api_key()
+            if not api_key:
+                QMessageBox.warning(self, "API Key Missing", 
+                                    "Gemini API key not found. Please set it in Preferences.")
+                return
+            self.ai = AIMarkdownAssistant(api_key)
+
+        try:
+            self.statusBar().showMessage("AI is analyzing table...", 3000)
+            analysis_result = self.ai.analyze_table(selected_text)
+
+            if analysis_result and not analysis_result.startswith("Error:") and not analysis_result.startswith("Failed to get valid response"):
+                # Display the analysis in a message box. 
+                # Analysis might be long, so consider a scrollable dialog for future improvement.
+                msg_box = QMessageBox(self)
+                msg_box.setWindowTitle("AI Table Analysis")
+                msg_box.setTextFormat(Qt.TextFormat.MarkdownText) # Render analysis as Markdown
+                msg_box.setText(analysis_result)
+                msg_box.setStandardButtons(QMessageBox.StandardButton.Ok)
+                msg_box.exec()
+                self.statusBar().showMessage("AI table analysis complete.", 3000)
+            else:
+                QMessageBox.critical(self, "AI Table Analysis Failed", 
+                                     f"Could not analyze table. AI response:\n{analysis_result}")
+                self.statusBar().showMessage("AI table analysis failed.", 3000)
+        except Exception as e:
+            logger.error(f"Error during AI table analysis: {e}")
+            QMessageBox.critical(self, "AI Error", f"An unexpected error occurred during table analysis: {e}")
+            self.statusBar().showMessage("Error during AI table analysis.", 3000)
 
     def delete_file_or_folder(self, item: QTreeWidgetItem, path_str: str, is_folder: bool):
         """
