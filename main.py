@@ -326,21 +326,12 @@ class MarkdownPreview(QWebEngineView):
         # Printing is handled via QPrintDialog and page().print() in MainWindow.
 
     def set_markdown(self, text: str, base_url: QUrl = None):
-        import datetime
-        debug_log_path = 'preview_debug.log'
-        def log_debug(msg):
-            with open(debug_log_path, 'w', encoding='utf-8') as f:
-                f.write(f"[{datetime.datetime.now()}] {msg}\n")
-        log_debug('--- set_markdown called ---')
-        log_debug(f'Raw Markdown:\n{text}\n')
         def mermaid_replacer(match: re.Match) -> str:
             code = match.group(1)
             return f'<div class="mermaid">{code}</div>'
         mermaid_pattern = re.compile(r'```mermaid\s*([\s\S]*?)```', re.MULTILINE)
         text_with_mermaid_divs = mermaid_pattern.sub(mermaid_replacer, text)
-        log_debug(f'After Mermaid div replacement:\n{text_with_mermaid_divs}\n')
         html_body = markdown.markdown(text_with_mermaid_divs, extensions=['fenced_code', 'extra', 'md_in_html'])
-        log_debug(f'HTML body:\n{html_body}\n')
         if '<div class="mermaid">' in html_body:
             from pathlib import Path
             mermaid_path = Path(__file__).parent / "_assets" / "mermaid.min.js"
@@ -360,10 +351,6 @@ class MarkdownPreview(QWebEngineView):
                     mermaid.initialize({{ startOnLoad: false }});
                     mermaid.init(undefined, document.querySelectorAll('.mermaid'));
                   }}
-                  var s = document.createElement('div');
-                  s.id = 'cdn-status';
-                  s.innerText = 'CDN loaded: ' + (typeof window.mermaid !== 'undefined');
-                  document.body.appendChild(s);
                 }});
                 </script>
             </head>
@@ -382,7 +369,6 @@ class MarkdownPreview(QWebEngineView):
             </head>
             <body>{html_body}</body>
             </html>'''
-        log_debug(f'Final HTML sent to preview:\n{full_html}\n')
         self.current_html = full_html
         if base_url:
             self.base_url = base_url
