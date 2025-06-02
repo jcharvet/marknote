@@ -44,6 +44,7 @@ from ai import AIMarkdownAssistant
 from settings_dialog import SettingsDialog
 import markdown
 import requests
+from ai_prompt_dialog import AIPromptDialog
 
 class RecentFilesManager:
     """
@@ -667,7 +668,7 @@ class MainWindow(QMainWindow):
         other_menu.addAction(link_action)
         ai_command_action = QAction("AI Command", self)
         ai_command_action.setShortcut(QKeySequence("Ctrl+Shift+Space"))
-        ai_command_action.triggered.connect(self.show_command_bar)
+        ai_command_action.triggered.connect(lambda: self.ai_prompt_action('command'))
         other_menu.addAction(ai_command_action)
         insert_image_action = QAction("Insert Image...", self)
         insert_image_action.triggered.connect(self.insert_image)
@@ -766,9 +767,9 @@ class MainWindow(QMainWindow):
         link_action.triggered.connect(self.insert_link)
         other_menu.addAction(link_action)
 
-        ai_command_action = QAction("AI Command Bar", self) # More descriptive
+        ai_command_action = QAction("AI Command", self) # More descriptive
         ai_command_action.setShortcut(QKeySequence("Ctrl+Shift+Space"))
-        ai_command_action.triggered.connect(self.show_command_bar)
+        ai_command_action.triggered.connect(lambda: self.ai_prompt_action('command'))
         other_menu.addAction(ai_command_action)
         
         # --- Help Menu ---
@@ -1325,40 +1326,77 @@ class MainWindow(QMainWindow):
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Failed to create file: {e}")
 
-    def ai_create_table(self):
-        """Prompts user for table description and uses AI to generate and insert it."""
+    def ai_prompt_action(self, action_type: str):
+        """Unified handler for all AI prompt-based actions."""
         if not self.ai:
+            from config_utils import load_gemini_api_key
             api_key = load_gemini_api_key()
             if not api_key:
-                QMessageBox.warning(self, "API Key Missing", 
-                                    "Gemini API key not found. Please set it in Preferences.")
+                QMessageBox.warning(self, "API Key Missing", "Gemini API key not found. Please set it in Preferences.")
                 return
             self.ai = AIMarkdownAssistant(api_key)
 
-        description, ok = QInputDialog.getText(self, "AI Create Table", 
-                                               "Describe the table you want to create:\n(e.g., 'a 3-column table for products: Name, Price, Stock with 3 examples')")
-
-        if ok and description:
-            try:
-                self.statusBar().showMessage("AI is generating table...", 3000)
-                markdown_table = self.ai.create_table(description)
-                if markdown_table and not markdown_table.startswith("Error:") and not markdown_table.startswith("Failed to get valid response") :
-                    self.editor.insert(markdown_table + "\n") # Add a newline after for spacing
-                    self.statusBar().showMessage("AI table created successfully.", 3000)
-                    self.set_dirty(True)
+        prompt_map = {
+            'table': {
+                'label': "Describe the table you want to create:",
+                'ai_method': self.ai.create_table,
+                'success_msg': "AI table created successfully.",
+                'fail_msg': "AI Table Creation Failed"
+            },
+            'mermaid': {
+                'label': "Describe the diagram you want to create:",
+                'ai_method': self.ai.create_mermaid_diagram,
+                'success_msg': "AI Mermaid diagram created successfully.",
+                'fail_msg': "AI Mermaid Diagram Creation Failed"
+            },
+            'command': {
+                'label': "Enter your AI command:",
+                'ai_method': lambda desc: self.ai.process_natural_command(desc, selected_text=self.editor.selectedText() or None),
+                'success_msg': "AI command executed.",
+                'fail_msg': "AI Command Failed"
+            }
+        }
+        if action_type not in prompt_map:
+            QMessageBox.critical(self, "AI Error", f"Unknown AI action: {action_type}")
+            return
+        label = prompt_map[action_type]['label']
+        ai_method = prompt_map[action_type]['ai_method']
+        success_msg = prompt_map[action_type]['success_msg']
+        fail_msg = prompt_map[action_type]['fail_msg']
+        prompt, ok = AIPromptDialog.get_prompt_from_user(label, self)
+        if not ok:
+            self.statusBar().showMessage(f"{action_type.capitalize()} creation cancelled.", 3000)
+            return
+        if not prompt:
+            QMessageBox.information(self, "No Description", f"{action_type.capitalize()} description cannot be empty.")
+            self.statusBar().showMessage(f"{action_type.capitalize()} creation cancelled: no description.", 3000)
+            return
+        try:
+            self.statusBar().showMessage(f"AI is generating {action_type}...", 3000)
+            result = ai_method(prompt)
+            if result and not result.startswith("Error:") and not result.startswith("Failed to get valid response"):
+                # Insert or replace selection for command, always insert for table/mermaid
+                if action_type == 'command' and self.editor.selectedText():
+                    self.editor.replaceSelectedText(result)
                 else:
-                    QMessageBox.critical(self, "AI Table Creation Failed", 
-                                         f"Could not generate table. AI response:\n{markdown_table}")
-                    self.statusBar().showMessage("AI table creation failed.", 3000)
-            except Exception as e:
-                logger.error(f"Error during AI table creation: {e}")
-                QMessageBox.critical(self, "AI Error", f"An unexpected error occurred: {e}")
-                self.statusBar().showMessage("Error during AI table creation.", 3000)
-        elif ok: # User pressed OK but provided no description
-            QMessageBox.information(self, "No Description", "Table description cannot be empty.")
-            self.statusBar().showMessage("Table creation cancelled: no description.", 3000)
-        else: # User cancelled
-            self.statusBar().showMessage("Table creation cancelled.", 3000)
+                    self.editor.insert(result + "\n")
+                self.statusBar().showMessage(success_msg, 3000)
+                self.set_dirty(True)
+            else:
+                QMessageBox.critical(self, fail_msg, f"Could not generate result. AI response:\n{result}")
+                self.statusBar().showMessage(fail_msg, 3000)
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            QMessageBox.critical(self, "AI Error", f"An unexpected error occurred: {e}")
+            self.statusBar().showMessage(f"Error during {action_type} creation.", 3000)
+
+    def ai_create_table(self):
+        self.ai_prompt_action('table')
+    def ai_create_mermaid_diagram(self):
+        self.ai_prompt_action('mermaid')
+    def execute_command(self):
+        self.ai_prompt_action('command')
 
     def ai_analyze_selected_table(self):
         """Analyzes the selected Markdown table using AI and displays insights."""
@@ -1479,31 +1517,6 @@ class MainWindow(QMainWindow):
             self.command_bar.setFocus() # Set focus to the input field
         else:
             self.command_bar_widget.hide()
-
-
-    def execute_command(self):
-        """Executes the command entered in the AI command bar."""
-        command_text = self.command_bar.toPlainText().strip()
-        if not command_text: return # Do nothing if command is empty
-
-        self.command_bar.clear() # Clear after getting text
-        self.command_bar_widget.hide() # Hide after execution (optional)
-        
-        selected_text = self.editor.selectedText()
-        # Process command via AI, potentially using selected text as context
-        ai_result = self.ai.process_natural_command(command_text, selected_text=selected_text if selected_text else None)
-        
-        # Insert the AI result at the end of the document or replace selection if any
-        if selected_text:
-            self.editor.replaceSelectedText(ai_result)
-        else:
-            # Append at the end of the document, ensuring a newline if needed
-            current_doc_text = self.editor.toPlainText()
-            if not current_doc_text.endswith("\n"):
-                self.editor.insert("\n\n")
-            else:
-                self.editor.insert("\n")
-            self.editor.insert(ai_result)
 
 
     def update_recent_files_menu(self):
@@ -2097,41 +2110,6 @@ class MainWindow(QMainWindow):
         except Exception as e:
             print(f"Error determining base_url for {self.current_file}: {e}")
         self.preview.set_markdown(text, base_url=base_url)
-
-    def ai_create_mermaid_diagram(self):
-        """Prompts user for diagram description and uses AI to generate and insert Mermaid code block."""
-        if not self.ai:
-            api_key = load_gemini_api_key()
-            if not api_key:
-                QMessageBox.warning(self, "API Key Missing", 
-                                    "Gemini API key not found. Please set it in Preferences.")
-                return
-            self.ai = AIMarkdownAssistant(api_key)
-
-        description, ok = QInputDialog.getText(self, "AI Create Mermaid Diagram", 
-                                               "Describe the diagram you want to create:\n(e.g., 'a flowchart for a login process')")
-
-        if ok and description:
-            try:
-                self.statusBar().showMessage("AI is generating Mermaid diagram...", 3000)
-                mermaid_code = self.ai.create_mermaid_diagram(description)
-                if mermaid_code and not mermaid_code.startswith("Error:") and not mermaid_code.startswith("Failed to get valid response"):
-                    self.editor.insert(mermaid_code + "\n")
-                    self.statusBar().showMessage("AI Mermaid diagram created successfully.", 3000)
-                    self.set_dirty(True)
-                else:
-                    QMessageBox.critical(self, "AI Mermaid Diagram Creation Failed", 
-                                         f"Could not generate diagram. AI response:\n{mermaid_code}")
-                    self.statusBar().showMessage("AI Mermaid diagram creation failed.", 3000)
-            except Exception as e:
-                logger.error(f"Error during AI Mermaid diagram creation: {e}")
-                QMessageBox.critical(self, "AI Error", f"An unexpected error occurred: {e}")
-                self.statusBar().showMessage("Error during AI Mermaid diagram creation.", 3000)
-        elif ok:
-            QMessageBox.information(self, "No Description", "Diagram description cannot be empty.")
-            self.statusBar().showMessage("Diagram creation cancelled: no description.", 3000)
-        else:
-            self.statusBar().showMessage("Diagram creation cancelled.", 3000)
 
 if __name__ == "__main__":
     # Standard PyQt application setup
