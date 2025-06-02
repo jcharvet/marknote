@@ -359,9 +359,11 @@ class MarkdownPreview(QWebEngineView):
                     pre {{ background-color: #f0f0f0; padding: 10px; border-radius: 5px; overflow-x: auto; }}
                     code {{ font-family: "Fira Mono", monospace; }}
                 </style>
-                <script type="module">
-                  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
-                  mermaid.initialize({ startOnLoad: true });
+                <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+                <script>
+                if (window.mermaid) {{
+                    mermaid.initialize({{ startOnLoad: true }});
+                }}
                 </script>
             </head>
             <body>{html_body}</body>
