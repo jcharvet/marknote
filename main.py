@@ -16,6 +16,7 @@ import tempfile
 import logging
 import hashlib
 import secrets
+import datetime
 
 from config_utils import (
     load_app_config, save_app_config,
@@ -325,32 +326,25 @@ class MarkdownPreview(QWebEngineView):
         # Printing is handled via QPrintDialog and page().print() in MainWindow.
 
     def set_markdown(self, text: str, base_url: QUrl = None):
-        """
-        Renders the given Markdown text as HTML in the preview pane.
-
-        Mermaid diagrams (```mermaid ... ```) are detected and rendered
-        by injecting the Mermaid.js library.
-
-        Args:
-            text (str): The Markdown text to render.
-        """
-        # Define a replacer function for Mermaid code blocks
+        import datetime
+        debug_log_path = 'preview_debug.log'
+        def log_debug(msg):
+            with open(debug_log_path, 'w', encoding='utf-8') as f:
+                f.write(f"[{datetime.datetime.now()}] {msg}\n")
+        log_debug('--- set_markdown called ---')
+        log_debug(f'Raw Markdown:\n{text}\n')
         def mermaid_replacer(match: re.Match) -> str:
             code = match.group(1)
-            # Enclose Mermaid code in a div for Mermaid.js to process
             return f'<div class="mermaid">{code}</div>'
-        
-        # Replace all ```mermaid ... ``` blocks with the HTML structure
         mermaid_pattern = re.compile(r'```mermaid\s*([\s\S]*?)```', re.MULTILINE)
         text_with_mermaid_divs = mermaid_pattern.sub(mermaid_replacer, text)
-        
-        # Convert Markdown to HTML (including the divs for Mermaid)
-        html_body = markdown.markdown(text_with_mermaid_divs, extensions=['fenced_code', 'extra'])
-        
-        # Construct the full HTML document
-        # Basic dark theme styling is applied via <style>
-        # If Mermaid diagrams are present, the Mermaid.js script is included from a CDN.
+        log_debug(f'After Mermaid div replacement:\n{text_with_mermaid_divs}\n')
+        html_body = markdown.markdown(text_with_mermaid_divs, extensions=['fenced_code', 'extra', 'md_in_html'])
+        log_debug(f'HTML body:\n{html_body}\n')
         if '<div class="mermaid">' in html_body:
+            from pathlib import Path
+            mermaid_path = Path(__file__).parent / "_assets" / "mermaid.min.js"
+            mermaid_url = mermaid_path.resolve().as_uri()
             full_html = f'''
             <html>
             <head>
@@ -359,9 +353,18 @@ class MarkdownPreview(QWebEngineView):
                     pre {{ background-color: #f0f0f0; padding: 10px; border-radius: 5px; overflow-x: auto; }}
                     code {{ font-family: "Fira Mono", monospace; }}
                 </style>
-                <script type="module">
-                  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
-                  mermaid.initialize({ startOnLoad: true });
+                <script src="{mermaid_url}"></script>
+                <script>
+                document.addEventListener("DOMContentLoaded", function() {{
+                  if (window.mermaid) {{
+                    mermaid.initialize({{ startOnLoad: false }});
+                    mermaid.init(undefined, document.querySelectorAll('.mermaid'));
+                  }}
+                  var s = document.createElement('div');
+                  s.id = 'cdn-status';
+                  s.innerText = 'CDN loaded: ' + (typeof window.mermaid !== 'undefined');
+                  document.body.appendChild(s);
+                }});
                 </script>
             </head>
             <body>{html_body}</body>
@@ -379,6 +382,7 @@ class MarkdownPreview(QWebEngineView):
             </head>
             <body>{html_body}</body>
             </html>'''
+        log_debug(f'Final HTML sent to preview:\n{full_html}\n')
         self.current_html = full_html
         if base_url:
             self.base_url = base_url
@@ -686,6 +690,10 @@ class MainWindow(QMainWindow):
         ai_create_table_action = QAction("AI Create Table...", self)
         ai_create_table_action.triggered.connect(self.ai_create_table)
         other_menu.addAction(ai_create_table_action)
+
+        ai_create_mermaid_action = QAction("AI Create Mermaid Diagram...", self)
+        ai_create_mermaid_action.triggered.connect(self.ai_create_mermaid_diagram)
+        other_menu.addAction(ai_create_mermaid_action)
 
         # --- Help Menu ---
         help_menu = menubar.addMenu("Help")
@@ -2103,6 +2111,41 @@ class MainWindow(QMainWindow):
         except Exception as e:
             print(f"Error determining base_url for {self.current_file}: {e}")
         self.preview.set_markdown(text, base_url=base_url)
+
+    def ai_create_mermaid_diagram(self):
+        """Prompts user for diagram description and uses AI to generate and insert Mermaid code block."""
+        if not self.ai:
+            api_key = load_gemini_api_key()
+            if not api_key:
+                QMessageBox.warning(self, "API Key Missing", 
+                                    "Gemini API key not found. Please set it in Preferences.")
+                return
+            self.ai = AIMarkdownAssistant(api_key)
+
+        description, ok = QInputDialog.getText(self, "AI Create Mermaid Diagram", 
+                                               "Describe the diagram you want to create:\n(e.g., 'a flowchart for a login process')")
+
+        if ok and description:
+            try:
+                self.statusBar().showMessage("AI is generating Mermaid diagram...", 3000)
+                mermaid_code = self.ai.create_mermaid_diagram(description)
+                if mermaid_code and not mermaid_code.startswith("Error:") and not mermaid_code.startswith("Failed to get valid response"):
+                    self.editor.insert(mermaid_code + "\n")
+                    self.statusBar().showMessage("AI Mermaid diagram created successfully.", 3000)
+                    self.set_dirty(True)
+                else:
+                    QMessageBox.critical(self, "AI Mermaid Diagram Creation Failed", 
+                                         f"Could not generate diagram. AI response:\n{mermaid_code}")
+                    self.statusBar().showMessage("AI Mermaid diagram creation failed.", 3000)
+            except Exception as e:
+                logger.error(f"Error during AI Mermaid diagram creation: {e}")
+                QMessageBox.critical(self, "AI Error", f"An unexpected error occurred: {e}")
+                self.statusBar().showMessage("Error during AI Mermaid diagram creation.", 3000)
+        elif ok:
+            QMessageBox.information(self, "No Description", "Diagram description cannot be empty.")
+            self.statusBar().showMessage("Diagram creation cancelled: no description.", 3000)
+        else:
+            self.statusBar().showMessage("Diagram creation cancelled.", 3000)
 
 if __name__ == "__main__":
     # Standard PyQt application setup
