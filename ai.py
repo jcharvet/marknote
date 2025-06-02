@@ -374,3 +374,41 @@ If the input is not a recognizable table or is too malformed to analyze, please 
         end_index = min(len(text), cursor_position + window)
         
         return text[start_index:end_index]
+
+    def create_mermaid_diagram(self, description: str) -> str:
+        """
+        Generates a Mermaid diagram code block from a natural language description.
+
+        Args:
+            description (str): A natural language description of the diagram to create.
+
+        Returns:
+            str: The AI-generated Mermaid code block (including ```mermaid ... ```), or an error message.
+        """
+        prompt = f"""
+You are an AI assistant helping a user create a Mermaid diagram for Markdown.
+
+The user wants to create a diagram with the following description:
+---description---
+{description}
+---end description---
+
+Your task is to generate the Mermaid code block for this diagram. 
+- Use the correct Mermaid syntax (e.g., graph TD, flowchart, sequenceDiagram, etc.)
+- Respond ONLY with the Mermaid code block, wrapped in triple backticks with 'mermaid' (e.g., ```mermaid ... ```).
+- Do NOT include any explanation, preamble, or extra formatting.
+
+Example if description is "a simple flowchart with Start, Process, End":
+```mermaid
+graph TD
+  Start --> Process --> End
+```
+
+Example if description is "a sequence diagram for user login":
+```mermaid
+sequenceDiagram
+  User->>Server: Login request
+  Server-->>User: Auth token
+```
+"""
+        return self._gemini_request(prompt, max_tokens=600)

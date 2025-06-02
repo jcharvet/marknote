@@ -687,6 +687,10 @@ class MainWindow(QMainWindow):
         ai_create_table_action.triggered.connect(self.ai_create_table)
         other_menu.addAction(ai_create_table_action)
 
+        ai_create_mermaid_action = QAction("AI Create Mermaid Diagram...", self)
+        ai_create_mermaid_action.triggered.connect(self.ai_create_mermaid_diagram)
+        other_menu.addAction(ai_create_mermaid_action)
+
         # --- Help Menu ---
         help_menu = menubar.addMenu("Help")
         syntax_action = QAction("Markdown & Mermaid Syntax", self)
@@ -2103,6 +2107,41 @@ class MainWindow(QMainWindow):
         except Exception as e:
             print(f"Error determining base_url for {self.current_file}: {e}")
         self.preview.set_markdown(text, base_url=base_url)
+
+    def ai_create_mermaid_diagram(self):
+        """Prompts user for diagram description and uses AI to generate and insert Mermaid code block."""
+        if not self.ai:
+            api_key = load_gemini_api_key()
+            if not api_key:
+                QMessageBox.warning(self, "API Key Missing", 
+                                    "Gemini API key not found. Please set it in Preferences.")
+                return
+            self.ai = AIMarkdownAssistant(api_key)
+
+        description, ok = QInputDialog.getText(self, "AI Create Mermaid Diagram", 
+                                               "Describe the diagram you want to create:\n(e.g., 'a flowchart for a login process')")
+
+        if ok and description:
+            try:
+                self.statusBar().showMessage("AI is generating Mermaid diagram...", 3000)
+                mermaid_code = self.ai.create_mermaid_diagram(description)
+                if mermaid_code and not mermaid_code.startswith("Error:") and not mermaid_code.startswith("Failed to get valid response"):
+                    self.editor.insert(mermaid_code + "\n")
+                    self.statusBar().showMessage("AI Mermaid diagram created successfully.", 3000)
+                    self.set_dirty(True)
+                else:
+                    QMessageBox.critical(self, "AI Mermaid Diagram Creation Failed", 
+                                         f"Could not generate diagram. AI response:\n{mermaid_code}")
+                    self.statusBar().showMessage("AI Mermaid diagram creation failed.", 3000)
+            except Exception as e:
+                logger.error(f"Error during AI Mermaid diagram creation: {e}")
+                QMessageBox.critical(self, "AI Error", f"An unexpected error occurred: {e}")
+                self.statusBar().showMessage("Error during AI Mermaid diagram creation.", 3000)
+        elif ok:
+            QMessageBox.information(self, "No Description", "Diagram description cannot be empty.")
+            self.statusBar().showMessage("Diagram creation cancelled: no description.", 3000)
+        else:
+            self.statusBar().showMessage("Diagram creation cancelled.", 3000)
 
 if __name__ == "__main__":
     # Standard PyQt application setup
