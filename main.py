@@ -32,12 +32,13 @@ from PyQt6.QtGui import QAction, QKeySequence, QFont, QColor, QTextCharFormat, Q
 from PyQt6.QtWidgets import (
     QApplication, QFileDialog, QHBoxLayout, QInputDialog, QLineEdit,
     QMainWindow, QMenu, QMessageBox, QPushButton, QSplitter, QTextEdit,
-    QToolBar, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget, QDialog # Added QDialog
+    QToolBar, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget, QDialog, QLabel # Added QDialog and QLabel
 )
 from PyQt6.Qsci import QsciLexerMarkdown, QsciScintilla
 from PyQt6.QtWebEngineWidgets import QWebEngineView # QWebEngineView already imported
 from PyQt6.QtWebEngineCore import QWebEngineSettings, QWebEnginePage # Added for PDF preview settings
 from PIL import Image
+from langdetect import detect, LangDetectException
 
 from ai import AIMarkdownAssistant
 from settings_dialog import SettingsDialog
@@ -848,6 +849,14 @@ class MainWindow(QMainWindow):
         # The AI command bar is added below the splitter
         central_layout.addWidget(self.command_bar_widget)
 
+        # Footer toolbar for language display
+        self.footer_toolbar = QToolBar("Footer Toolbar")
+        self.footer_toolbar.setMovable(False)
+        self.footer_toolbar.setStyleSheet("background: #23252b; color: #61AFEF; border-top: 1px solid #4b5263;")
+        self.language_label = QLabel("Language: ...")
+        self.footer_toolbar.addWidget(self.language_label)
+        central_layout.addWidget(self.footer_toolbar)
+        self.update_language_label()
 
     def _init_library_panel(self):
         """Initializes the document library panel on the left side of the window."""
@@ -976,6 +985,7 @@ class MainWindow(QMainWindow):
         is_dirty = self.editor.toPlainText() != self.last_saved_text
         self.set_dirty(is_dirty)
         self.update_preview()
+        self.update_language_label()
 
     def _update_window_title(self, filename: str | None = None, dirty: bool = False):
         if filename:
@@ -2183,6 +2193,15 @@ class MainWindow(QMainWindow):
         new_text = f"<!-- TOC -->\n{toc_md}\n\n" + markdown_text
         editor.setPlainText(new_text)
         QMessageBox.information(self, "Table of Contents Inserted", "Table of Contents has been inserted at the top of the document.")
+
+    def update_language_label(self):
+        """Detects and updates the language label in the footer toolbar."""
+        text = self.editor.toPlainText()
+        try:
+            lang = detect(text) if text.strip() else "unknown"
+        except LangDetectException:
+            lang = "unknown"
+        self.language_label.setText(f"Language: {lang}")
 
 if __name__ == "__main__":
     # Standard PyQt application setup

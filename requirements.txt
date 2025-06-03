@@ -5,3 +5,4 @@ markdown
 requests
 PyQt6-sip
 Pillow
+langdetect
