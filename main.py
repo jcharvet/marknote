@@ -45,6 +45,7 @@ from settings_dialog import SettingsDialog
 import markdown
 import requests
 from ai_prompt_dialog import AIPromptDialog
+from toc_utils import extract_headings, format_toc
 
 class RecentFilesManager:
     """
@@ -598,7 +599,7 @@ class MainWindow(QMainWindow):
             event.accept() # Proceed with closing
 
     def _init_menubar(self):
-        """Initializes the main menubar and its menus (File, View, Other, Help)."""
+        """Initializes the main menubar and its menus (File, View, Tools, Help)."""
         menubar = self.menuBar()
         menubar.setStyleSheet(self.MENUBAR_STYLESHEET)
 
@@ -617,18 +618,18 @@ class MainWindow(QMainWindow):
         open_folder_action.triggered.connect(self.open_folder)
         file_menu.addAction(open_folder_action)
 
-        self.recent_files_menu = QMenu("Open Recent", self) # Menu for recent files
+        self.recent_files_menu = QMenu("Open Recent", self)
         file_menu.addMenu(self.recent_files_menu)
         # update_recent_files_menu is called during __init__ after manager is ready
 
         file_menu.addSeparator()
 
         save_action = QAction("Save", self)
-        save_action.setShortcut(QKeySequence.StandardKey.Save) # Use standard shortcut
+        save_action.setShortcut(QKeySequence.StandardKey.Save)
         save_action.triggered.connect(self.save_file)
         file_menu.addAction(save_action)
 
-        save_as_action = QAction("Save As...", self) # Standard naming
+        save_as_action = QAction("Save As...", self)
         save_as_action.setShortcut(QKeySequence("Ctrl+Shift+S"))
         save_as_action.triggered.connect(self.save_file_as)
         file_menu.addAction(save_as_action)
@@ -652,47 +653,56 @@ class MainWindow(QMainWindow):
         export_as_action = QAction("Export As...", self)
         export_as_action.triggered.connect(self.export_file_as)
         file_menu.addAction(export_as_action)
+        
+        file_menu.addSeparator()
 
-        # View Menu
+        exit_action = QAction("Exit", self)
+        exit_action.triggered.connect(self.close_application)
+        file_menu.addAction(exit_action)
+
+        # --- View Menu ---
         view_menu = menubar.addMenu("&View")
         self.toggle_preview_action = QAction("Toggle Preview Pane", self, checkable=True)
         self.toggle_preview_action.triggered.connect(self._toggle_preview_pane)
         view_menu.addAction(self.toggle_preview_action)
 
-        # Only create 'Other' menu once
-        if not hasattr(self, 'other_menu'):
-            self.other_menu = menubar.addMenu("Other")
-        other_menu = self.other_menu
-        link_action = QAction("Link", self)
+        # --- Tools Menu ---
+        self.tools_menu = menubar.addMenu("Tools")
+        
+        link_action = QAction("Insert Link", self)
         link_action.triggered.connect(self.insert_link)
-        other_menu.addAction(link_action)
+        self.tools_menu.addAction(link_action)
+
+        insert_image_action = QAction("Insert Image...", self)
+        insert_image_action.triggered.connect(self.insert_image)
+        self.tools_menu.addAction(insert_image_action)
+        
+        self.tools_menu.addSeparator()
+
         ai_command_action = QAction("AI Command", self)
         ai_command_action.setShortcut(QKeySequence("Ctrl+Shift+Space"))
         ai_command_action.triggered.connect(lambda: self.ai_prompt_action('command'))
-        other_menu.addAction(ai_command_action)
-        insert_image_action = QAction("Insert Image...", self)
-        insert_image_action.triggered.connect(self.insert_image)
-        other_menu.addAction(insert_image_action)
+        self.tools_menu.addAction(ai_command_action)
 
         ai_create_table_action = QAction("AI Create Table...", self)
         ai_create_table_action.triggered.connect(self.ai_create_table)
-        other_menu.addAction(ai_create_table_action)
+        self.tools_menu.addAction(ai_create_table_action)
 
         ai_create_mermaid_action = QAction("AI Create Mermaid Diagram...", self)
         ai_create_mermaid_action.triggered.connect(self.ai_create_mermaid_diagram)
-        other_menu.addAction(ai_create_mermaid_action)
+        self.tools_menu.addAction(ai_create_mermaid_action)
+        
+        self.tools_menu.addSeparator()
+
+        toc_action = QAction("Generate Table of Contents", self)
+        toc_action.triggered.connect(self.insert_table_of_contents)
+        self.tools_menu.addAction(toc_action)
 
         # --- Help Menu ---
         help_menu = menubar.addMenu("Help")
         syntax_action = QAction("Markdown & Mermaid Syntax", self)
         syntax_action.triggered.connect(self.show_syntax_help)
         help_menu.addAction(syntax_action)
-
-        # Add Exit action at the end
-        file_menu.addSeparator()
-        exit_action = QAction("Exit", self)
-        exit_action.triggered.connect(self.close_application)
-        file_menu.addAction(exit_action)
 
     def init_ui(self):
         # Set dark palette
@@ -777,6 +787,28 @@ class MainWindow(QMainWindow):
         syntax_action = QAction("Markdown & Mermaid Syntax", self)
         syntax_action.triggered.connect(self.show_syntax_help)
         help_menu.addAction(syntax_action)
+
+        # Remove 'Other' menu, only add 'Tools' menu
+        tools_menu = self.menuBar().addMenu("Tools")
+        link_action = QAction("Insert Link", self)
+        link_action.triggered.connect(self.insert_link)
+        tools_menu.addAction(link_action)
+        ai_command_action = QAction("AI Command", self)
+        ai_command_action.setShortcut(QKeySequence("Ctrl+Shift+Space"))
+        ai_command_action.triggered.connect(lambda: self.ai_prompt_action('command'))
+        tools_menu.addAction(ai_command_action)
+        insert_image_action = QAction("Insert Image...", self)
+        insert_image_action.triggered.connect(self.insert_image)
+        tools_menu.addAction(insert_image_action)
+        ai_create_table_action = QAction("AI Create Table...", self)
+        ai_create_table_action.triggered.connect(self.ai_create_table)
+        tools_menu.addAction(ai_create_table_action)
+        ai_create_mermaid_action = QAction("AI Create Mermaid Diagram...", self)
+        ai_create_mermaid_action.triggered.connect(self.ai_create_mermaid_diagram)
+        tools_menu.addAction(ai_create_mermaid_action)
+        toc_action = QAction("Generate Table of Contents", self)
+        toc_action.triggered.connect(self.insert_table_of_contents)
+        tools_menu.addAction(toc_action)
 
     def _setup_central_widget(self):
         """
@@ -2110,6 +2142,27 @@ class MainWindow(QMainWindow):
         except Exception as e:
             print(f"Error determining base_url for {self.current_file}: {e}")
         self.preview.set_markdown(text, base_url=base_url)
+
+    def insert_table_of_contents(self):
+        """Generate and insert a Table of Contents at the top of the document."""
+        editor = getattr(self, 'editor', None)
+        if not editor:
+            QMessageBox.warning(self, "No Editor", "No editor instance found.")
+            return
+        markdown_text = editor.toPlainText()
+        try:
+            headings = extract_headings(markdown_text)
+            toc_md = format_toc(headings)
+        except Exception as e:
+            QMessageBox.critical(self, "ToC Error", f"Failed to generate ToC: {e}")
+            return
+        if not toc_md:
+            QMessageBox.information(self, "No Headings Found", "No headings found to generate a Table of Contents.")
+            return
+        # Insert ToC at the top
+        new_text = f"<!-- TOC -->\n{toc_md}\n\n" + markdown_text
+        editor.setPlainText(new_text)
+        QMessageBox.information(self, "Table of Contents Inserted", "Table of Contents has been inserted at the top of the document.")
 
 if __name__ == "__main__":
     # Standard PyQt application setup
