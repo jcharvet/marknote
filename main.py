@@ -36,15 +36,17 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.Qsci import QsciLexerMarkdown, QsciScintilla
 from PyQt6.QtWebEngineWidgets import QWebEngineView # QWebEngineView already imported
-from PyQt6.QtPrintSupport import QPrinter, QPrintDialog
-from PyQt6.QtWebEngineCore import QWebEngineSettings # Added for PDF preview settings
+from PyQt6.QtWebEngineCore import QWebEngineSettings, QWebEnginePage # Added for PDF preview settings
 from PIL import Image
 
 from ai import AIMarkdownAssistant
 from settings_dialog import SettingsDialog
 import markdown
+from markdown.extensions.toc import TocExtension
+from toc_utils import generate_anchor
 import requests
 from ai_prompt_dialog import AIPromptDialog
+from toc_utils import extract_headings, format_toc
 
 class RecentFilesManager:
     """
@@ -312,17 +314,19 @@ class MarkdownPreview(QWebEngineView):
     It supports standard Markdown and Mermaid diagrams.
     The preview is themed for dark mode.
     """
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, md_parser=None):
         """
         Initializes the MarkdownPreview.
 
         Args:
             parent (QWidget, optional): The parent widget. Defaults to None.
+            md_parser (markdown.Markdown, optional): The Markdown parser instance. Defaults to None.
         """
         super().__init__(parent)
         self.setStyleSheet("background-color: #21252b; color: #d7dae0; font-family: sans-serif;")
         self.current_html: str = ""
         self.base_url: QUrl = QUrl()
+        self.md_parser = md_parser
         # Note: QWebEngineSettings.WebAttribute.PrintSupportEnabled was problematic and removed.
         # Printing is handled via QPrintDialog and page().print() in MainWindow.
 
@@ -332,7 +336,13 @@ class MarkdownPreview(QWebEngineView):
             return f'<div class="mermaid">{code}</div>'
         mermaid_pattern = re.compile(r'```mermaid\s*([\s\S]*?)```', re.MULTILINE)
         text_with_mermaid_divs = mermaid_pattern.sub(mermaid_replacer, text)
-        html_body = markdown.markdown(text_with_mermaid_divs, extensions=['fenced_code', 'extra', 'md_in_html'])
+
+        if self.md_parser:
+            html_body = self.md_parser.convert(text_with_mermaid_divs)
+            self.md_parser.reset() # Important for ToC and other stateful extensions
+        else:
+            # Fallback if parser not provided (should not happen in normal operation)
+            html_body = markdown.markdown(text_with_mermaid_divs, extensions=['fenced_code', 'extra', 'md_in_html'])
         if '<div class="mermaid">' in html_body:
             from pathlib import Path
             mermaid_path = Path(__file__).parent / "_assets" / "mermaid.min.js"
@@ -495,6 +505,17 @@ class MainWindow(QMainWindow):
         self.current_file: str | None = None # Path to the currently open file
         self.last_saved_text: str = ""      # Content of the editor when last saved
         self.ai: AIMarkdownAssistant | None = None # AI Assistant instance
+
+        # Initialize Markdown parser with ToC extension and custom slugify
+        self.md_parser = markdown.Markdown(
+            extensions=[
+                'extra',
+                'fenced_code',
+                'nl2br',
+                'md_in_html',
+                TocExtension(slugify=generate_anchor, permalink=True) 
+            ]
+        )
         
         # Initialize UI components by calling helper methods
         self._init_menubar()
@@ -598,7 +619,7 @@ class MainWindow(QMainWindow):
             event.accept() # Proceed with closing
 
     def _init_menubar(self):
-        """Initializes the main menubar and its menus (File, View, Other, Help)."""
+        """Initializes the main menubar and its menus (File, View, Tools, Help)."""
         menubar = self.menuBar()
         menubar.setStyleSheet(self.MENUBAR_STYLESHEET)
 
@@ -617,18 +638,18 @@ class MainWindow(QMainWindow):
         open_folder_action.triggered.connect(self.open_folder)
         file_menu.addAction(open_folder_action)
 
-        self.recent_files_menu = QMenu("Open Recent", self) # Menu for recent files
+        self.recent_files_menu = QMenu("Open Recent", self)
         file_menu.addMenu(self.recent_files_menu)
         # update_recent_files_menu is called during __init__ after manager is ready
 
         file_menu.addSeparator()
 
         save_action = QAction("Save", self)
-        save_action.setShortcut(QKeySequence.StandardKey.Save) # Use standard shortcut
+        save_action.setShortcut(QKeySequence.StandardKey.Save)
         save_action.triggered.connect(self.save_file)
         file_menu.addAction(save_action)
 
-        save_as_action = QAction("Save As...", self) # Standard naming
+        save_as_action = QAction("Save As...", self)
         save_as_action.setShortcut(QKeySequence("Ctrl+Shift+S"))
         save_as_action.triggered.connect(self.save_file_as)
         file_menu.addAction(save_as_action)
@@ -652,47 +673,56 @@ class MainWindow(QMainWindow):
         export_as_action = QAction("Export As...", self)
         export_as_action.triggered.connect(self.export_file_as)
         file_menu.addAction(export_as_action)
+        
+        file_menu.addSeparator()
 
-        # View Menu
+        exit_action = QAction("Exit", self)
+        exit_action.triggered.connect(self.close_application)
+        file_menu.addAction(exit_action)
+
+        # --- View Menu ---
         view_menu = menubar.addMenu("&View")
         self.toggle_preview_action = QAction("Toggle Preview Pane", self, checkable=True)
         self.toggle_preview_action.triggered.connect(self._toggle_preview_pane)
         view_menu.addAction(self.toggle_preview_action)
 
-        # Only create 'Other' menu once
-        if not hasattr(self, 'other_menu'):
-            self.other_menu = menubar.addMenu("Other")
-        other_menu = self.other_menu
-        link_action = QAction("Link", self)
+        # --- Tools Menu ---
+        self.tools_menu = menubar.addMenu("Tools")
+        
+        link_action = QAction("Insert Link", self)
         link_action.triggered.connect(self.insert_link)
-        other_menu.addAction(link_action)
+        self.tools_menu.addAction(link_action)
+
+        insert_image_action = QAction("Insert Image...", self)
+        insert_image_action.triggered.connect(self.insert_image)
+        self.tools_menu.addAction(insert_image_action)
+        
+        self.tools_menu.addSeparator()
+
         ai_command_action = QAction("AI Command", self)
         ai_command_action.setShortcut(QKeySequence("Ctrl+Shift+Space"))
         ai_command_action.triggered.connect(lambda: self.ai_prompt_action('command'))
-        other_menu.addAction(ai_command_action)
-        insert_image_action = QAction("Insert Image...", self)
-        insert_image_action.triggered.connect(self.insert_image)
-        other_menu.addAction(insert_image_action)
+        self.tools_menu.addAction(ai_command_action)
 
         ai_create_table_action = QAction("AI Create Table...", self)
         ai_create_table_action.triggered.connect(self.ai_create_table)
-        other_menu.addAction(ai_create_table_action)
+        self.tools_menu.addAction(ai_create_table_action)
 
         ai_create_mermaid_action = QAction("AI Create Mermaid Diagram...", self)
         ai_create_mermaid_action.triggered.connect(self.ai_create_mermaid_diagram)
-        other_menu.addAction(ai_create_mermaid_action)
+        self.tools_menu.addAction(ai_create_mermaid_action)
+        
+        self.tools_menu.addSeparator()
+
+        toc_action = QAction("Generate Table of Contents", self)
+        toc_action.triggered.connect(self.insert_table_of_contents)
+        self.tools_menu.addAction(toc_action)
 
         # --- Help Menu ---
         help_menu = menubar.addMenu("Help")
         syntax_action = QAction("Markdown & Mermaid Syntax", self)
         syntax_action.triggered.connect(self.show_syntax_help)
         help_menu.addAction(syntax_action)
-
-        # Add Exit action at the end
-        file_menu.addSeparator()
-        exit_action = QAction("Exit", self)
-        exit_action.triggered.connect(self.close_application)
-        file_menu.addAction(exit_action)
 
     def init_ui(self):
         # Set dark palette
@@ -778,6 +808,28 @@ class MainWindow(QMainWindow):
         syntax_action.triggered.connect(self.show_syntax_help)
         help_menu.addAction(syntax_action)
 
+        # Remove 'Other' menu, only add 'Tools' menu
+        tools_menu = self.menuBar().addMenu("Tools")
+        link_action = QAction("Insert Link", self)
+        link_action.triggered.connect(self.insert_link)
+        tools_menu.addAction(link_action)
+        ai_command_action = QAction("AI Command", self)
+        ai_command_action.setShortcut(QKeySequence("Ctrl+Shift+Space"))
+        ai_command_action.triggered.connect(lambda: self.ai_prompt_action('command'))
+        tools_menu.addAction(ai_command_action)
+        insert_image_action = QAction("Insert Image...", self)
+        insert_image_action.triggered.connect(self.insert_image)
+        tools_menu.addAction(insert_image_action)
+        ai_create_table_action = QAction("AI Create Table...", self)
+        ai_create_table_action.triggered.connect(self.ai_create_table)
+        tools_menu.addAction(ai_create_table_action)
+        ai_create_mermaid_action = QAction("AI Create Mermaid Diagram...", self)
+        ai_create_mermaid_action.triggered.connect(self.ai_create_mermaid_diagram)
+        tools_menu.addAction(ai_create_mermaid_action)
+        toc_action = QAction("Generate Table of Contents", self)
+        toc_action.triggered.connect(self.insert_table_of_contents)
+        tools_menu.addAction(toc_action)
+
     def _setup_central_widget(self):
         """
         Sets up the central widget, layout, and integrates the main UI components
@@ -828,7 +880,7 @@ class MainWindow(QMainWindow):
     def _init_editor_preview_splitter(self):
         """Initializes the Markdown editor, preview pane, and the QSplitter that manages them."""
         self.editor = MarkdownEditor(parent=self, main_window=self)
-        self.preview = MarkdownPreview()
+        self.preview = MarkdownPreview(md_parser=self.md_parser)
         self.editor.contentChanged.connect(self._on_editor_content_changed)
 
         # The main splitter that divides the library panel from the editor/preview area
@@ -2110,6 +2162,27 @@ class MainWindow(QMainWindow):
         except Exception as e:
             print(f"Error determining base_url for {self.current_file}: {e}")
         self.preview.set_markdown(text, base_url=base_url)
+
+    def insert_table_of_contents(self):
+        """Generate and insert a Table of Contents at the top of the document."""
+        editor = getattr(self, 'editor', None)
+        if not editor:
+            QMessageBox.warning(self, "No Editor", "No editor instance found.")
+            return
+        markdown_text = editor.toPlainText()
+        try:
+            headings = extract_headings(markdown_text)
+            toc_md = format_toc(headings)
+        except Exception as e:
+            QMessageBox.critical(self, "ToC Error", f"Failed to generate ToC: {e}")
+            return
+        if not toc_md:
+            QMessageBox.information(self, "No Headings Found", "No headings found to generate a Table of Contents.")
+            return
+        # Insert ToC at the top
+        new_text = f"<!-- TOC -->\n{toc_md}\n\n" + markdown_text
+        editor.setPlainText(new_text)
+        QMessageBox.information(self, "Table of Contents Inserted", "Table of Contents has been inserted at the top of the document.")
 
 if __name__ == "__main__":
     # Standard PyQt application setup

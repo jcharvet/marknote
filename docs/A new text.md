@@ -1,3 +1,7 @@
+<!-- TOC -->
+    - [Parisian Breakfast Ideas for Travelers](#parisian-breakfast-ideas-for-travelers)
+  - [To Do List:](#to-do-list)
+
 Okay, here are some breakfast ideas for your trip to Paris, in markdown format:
 
 ### Parisian Breakfast Ideas for Travelers
