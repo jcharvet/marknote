@@ -32,7 +32,7 @@ from PyQt6.QtGui import QAction, QKeySequence, QFont, QColor, QTextCharFormat, Q
 from PyQt6.QtWidgets import (
     QApplication, QFileDialog, QHBoxLayout, QInputDialog, QLineEdit,
     QMainWindow, QMenu, QMessageBox, QPushButton, QSplitter, QTextEdit,
-    QToolBar, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget, QDialog, QLabel # Added QDialog and QLabel
+    QToolBar, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget, QDialog, QLabel, QDialogButtonBox, QListWidget, QComboBox
 )
 from PyQt6.Qsci import QsciLexerMarkdown, QsciScintilla
 from PyQt6.QtWebEngineWidgets import QWebEngineView # QWebEngineView already imported
@@ -514,7 +514,7 @@ class MainWindow(QMainWindow):
                 'fenced_code',
                 'nl2br',
                 'md_in_html',
-                TocExtension(slugify=generate_anchor, permalink=True) 
+                TocExtension(slugify=generate_anchor, permalink=False) 
             ]
         )
         
@@ -719,6 +719,10 @@ class MainWindow(QMainWindow):
         toc_action.triggered.connect(self.insert_table_of_contents)
         self.tools_menu.addAction(toc_action)
 
+        grammar_action = QAction("Check Grammar & Style", self)
+        grammar_action.triggered.connect(self.check_grammar_style)
+        self.tools_menu.addAction(grammar_action)
+
         # --- Help Menu ---
         help_menu = menubar.addMenu("Help")
         syntax_action = QAction("Markdown & Mermaid Syntax", self)
@@ -830,6 +834,9 @@ class MainWindow(QMainWindow):
         toc_action = QAction("Generate Table of Contents", self)
         toc_action.triggered.connect(self.insert_table_of_contents)
         tools_menu.addAction(toc_action)
+        grammar_action = QAction("Check Grammar & Style", self)
+        grammar_action.triggered.connect(self.check_grammar_style)
+        tools_menu.addAction(grammar_action)
 
     def _setup_central_widget(self):
         """
@@ -855,6 +862,17 @@ class MainWindow(QMainWindow):
         self.footer_toolbar.setStyleSheet("background: #23252b; color: #61AFEF; border-top: 1px solid #4b5263;")
         self.language_label = QLabel("Language: ...")
         self.footer_toolbar.addWidget(self.language_label)
+        # Language override dropdown
+        self.language_override_combo = QComboBox()
+        self.language_override_combo.setEditable(True)
+        self.language_override_combo.setFixedWidth(120)
+        self.language_override_combo.addItem("")
+        self.language_override_combo.addItems([
+            "English", "French", "German", "Spanish", "Italian", "Portuguese", "Dutch", "Russian", "Chinese", "Japanese", "Korean"
+        ])
+        self.language_override_combo.setToolTip("Override detected language")
+        self.language_override_combo.currentTextChanged.connect(self.set_language_override)
+        self.footer_toolbar.addWidget(self.language_override_combo)
         central_layout.addWidget(self.footer_toolbar)
         self.update_language_label()
 
@@ -1288,6 +1306,9 @@ class MainWindow(QMainWindow):
         ai_analyze_table_action = menu.addAction("AI Analyze Table")
         ai_analyze_table_action.setEnabled(self.editor.hasSelectedText())
         ai_analyze_table_action.triggered.connect(self.ai_analyze_selected_table)
+        
+        grammar_action = menu.addAction("Check Grammar & Style")
+        grammar_action.triggered.connect(self.check_grammar_style)
         
         menu.exec(self.editor.mapToGlobal(position)) # Show menu at global cursor position
 
@@ -2195,13 +2216,82 @@ class MainWindow(QMainWindow):
         QMessageBox.information(self, "Table of Contents Inserted", "Table of Contents has been inserted at the top of the document.")
 
     def update_language_label(self):
-        """Detects and updates the language label in the footer toolbar."""
+        if getattr(self, 'language_override', None):
+            self.language_label.setText(f"Language: {self.language_override} (manual)")
+            return
         text = self.editor.toPlainText()
         try:
             lang = detect(text) if text.strip() else "unknown"
         except LangDetectException:
             lang = "unknown"
         self.language_label.setText(f"Language: {lang}")
+
+    def check_grammar_style(self):
+        text = self.editor.selectedText() or self.editor.toPlainText()
+        language = getattr(self, 'language_override', None) or self.language_label.text().replace('Language: ', '').replace(' (manual)', '')
+        if not text.strip():
+            QMessageBox.information(self, "No Text", "No text selected or document is empty.")
+            return
+        self.statusBar().showMessage("AI is checking grammar and style...", 3000)
+        result = self.ai.grammar_style_check(text, language)
+        # Parse result: expect corrected text and suggestions separated by a line with 'Suggestions:'
+        corrected, suggestions = self._parse_grammar_result(result)
+        dlg = QDialog(self)
+        dlg.setWindowTitle("AI Grammar & Style Suggestions")
+        layout = QVBoxLayout(dlg)
+        layout.addWidget(QLabel("Original:"))
+        orig_box = QTextEdit()
+        orig_box.setPlainText(text)
+        orig_box.setReadOnly(True)
+        layout.addWidget(orig_box)
+        layout.addWidget(QLabel("Corrected:"))
+        corr_box = QTextEdit()
+        corr_box.setPlainText(corrected)
+        corr_box.setReadOnly(True)
+        layout.addWidget(corr_box)
+        if suggestions:
+            layout.addWidget(QLabel("Suggestions:"))
+            sugg_list = QListWidget()
+            for s in suggestions:
+                sugg_list.addItem(s)
+            layout.addWidget(sugg_list)
+        btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        layout.addWidget(btns)
+        def on_accept():
+            if self.editor.selectedText():
+                self.editor.replaceSelectedText(corrected)
+            else:
+                self.editor.setPlainText(corrected)
+            dlg.accept()
+        btns.accepted.connect(on_accept)
+        btns.rejected.connect(dlg.reject)
+        dlg.exec()
+
+    def _parse_grammar_result(self, result: str):
+        # Naive split: look for first bullet list or 'Suggestions:'
+        lines = result.splitlines()
+        corrected = []
+        suggestions = []
+        in_suggestions = False
+        for line in lines:
+            if line.strip().startswith('-') or line.strip().lower().startswith('suggestion'):
+                in_suggestions = True
+            if in_suggestions:
+                suggestions.append(line.strip())
+            else:
+                corrected.append(line)
+        corrected_text = '\n'.join(corrected).strip()
+        suggestions = [s for s in suggestions if s and s != 'Suggestions:']
+        return corrected_text, suggestions
+
+    def set_language_override(self, value):
+        value = value.strip()
+        if value:
+            self.language_override = value
+            self.language_label.setText(f"Language: {value} (manual)")
+        else:
+            self.language_override = None
+            self.update_language_label()
 
 if __name__ == "__main__":
     # Standard PyQt application setup

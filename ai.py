@@ -412,3 +412,18 @@ sequenceDiagram
 ```
 """
         return self._gemini_request(prompt, max_tokens=600)
+
+    def grammar_style_check(self, text: str, language: str) -> str:
+        """
+        Checks the given text for grammar and style issues using the specified language.
+        Returns corrected text and suggestions.
+        """
+        prompt = f"""
+You are an expert proofreader. The following text is written in {language}.
+Check it for grammar and style issues. Suggest corrections and briefly explain any changes.
+Return the corrected text and a bullet list of suggestions.
+---text---
+{text}
+---end text---
+"""
+        return self._gemini_request(prompt, max_tokens=len(text) + 200)
