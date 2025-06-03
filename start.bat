@@ -34,6 +34,20 @@ if errorlevel 1 (
     set NEED_INSTALL=1
 )
 
+REM  check for langdetect
+python -c "import langdetect" 2>NUL
+if errorlevel 1 (
+    echo langdetect not found, will install dependencies...
+    set NEED_INSTALL=1
+)
+
+REM Check for missing dependencies
+for %%F in (requirements.txt) do set REQTIME=%%~tF
+for %%F in (.venv\.deps_installed) do set INSTIME=%%~tF
+if "%REQTIME%" GTR "%INSTIME%" (
+    set NEED_INSTALL=1
+)
+
 if %NEED_INSTALL%==1 (
     echo Installing/updating dependencies...
     pip install -r requirements.txt
