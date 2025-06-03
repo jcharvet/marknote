@@ -29,11 +29,11 @@ def extract_headings(markdown_text: str, max_depth: int = 3) -> List[Dict]:
             text = match.group(2).strip()
             if not text:
                 continue
-            anchor = generate_anchor(text)
+            anchor = generate_anchor(text, '-')
             headings.append({'level': level, 'text': text, 'anchor': anchor})
     return headings
 
-def generate_anchor(text: str) -> str:
+def generate_anchor(text: str, separator: str) -> str:
     """
     Generate a GitHub-style anchor from heading text.
     Lowercase, replace spaces with hyphens, strip most punctuation.

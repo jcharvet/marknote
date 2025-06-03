@@ -36,13 +36,14 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.Qsci import QsciLexerMarkdown, QsciScintilla
 from PyQt6.QtWebEngineWidgets import QWebEngineView # QWebEngineView already imported
-from PyQt6.QtPrintSupport import QPrinter, QPrintDialog
-from PyQt6.QtWebEngineCore import QWebEngineSettings # Added for PDF preview settings
+from PyQt6.QtWebEngineCore import QWebEngineSettings, QWebEnginePage # Added for PDF preview settings
 from PIL import Image
 
 from ai import AIMarkdownAssistant
 from settings_dialog import SettingsDialog
 import markdown
+from markdown.extensions.toc import TocExtension
+from toc_utils import generate_anchor
 import requests
 from ai_prompt_dialog import AIPromptDialog
 from toc_utils import extract_headings, format_toc
@@ -313,17 +314,19 @@ class MarkdownPreview(QWebEngineView):
     It supports standard Markdown and Mermaid diagrams.
     The preview is themed for dark mode.
     """
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, md_parser=None):
         """
         Initializes the MarkdownPreview.
 
         Args:
             parent (QWidget, optional): The parent widget. Defaults to None.
+            md_parser (markdown.Markdown, optional): The Markdown parser instance. Defaults to None.
         """
         super().__init__(parent)
         self.setStyleSheet("background-color: #21252b; color: #d7dae0; font-family: sans-serif;")
         self.current_html: str = ""
         self.base_url: QUrl = QUrl()
+        self.md_parser = md_parser
         # Note: QWebEngineSettings.WebAttribute.PrintSupportEnabled was problematic and removed.
         # Printing is handled via QPrintDialog and page().print() in MainWindow.
 
@@ -333,7 +336,13 @@ class MarkdownPreview(QWebEngineView):
             return f'<div class="mermaid">{code}</div>'
         mermaid_pattern = re.compile(r'```mermaid\s*([\s\S]*?)```', re.MULTILINE)
         text_with_mermaid_divs = mermaid_pattern.sub(mermaid_replacer, text)
-        html_body = markdown.markdown(text_with_mermaid_divs, extensions=['fenced_code', 'extra', 'md_in_html'])
+
+        if self.md_parser:
+            html_body = self.md_parser.convert(text_with_mermaid_divs)
+            self.md_parser.reset() # Important for ToC and other stateful extensions
+        else:
+            # Fallback if parser not provided (should not happen in normal operation)
+            html_body = markdown.markdown(text_with_mermaid_divs, extensions=['fenced_code', 'extra', 'md_in_html'])
         if '<div class="mermaid">' in html_body:
             from pathlib import Path
             mermaid_path = Path(__file__).parent / "_assets" / "mermaid.min.js"
@@ -496,6 +505,17 @@ class MainWindow(QMainWindow):
         self.current_file: str | None = None # Path to the currently open file
         self.last_saved_text: str = ""      # Content of the editor when last saved
         self.ai: AIMarkdownAssistant | None = None # AI Assistant instance
+
+        # Initialize Markdown parser with ToC extension and custom slugify
+        self.md_parser = markdown.Markdown(
+            extensions=[
+                'extra',
+                'fenced_code',
+                'nl2br',
+                'md_in_html',
+                TocExtension(slugify=generate_anchor, permalink=True) 
+            ]
+        )
         
         # Initialize UI components by calling helper methods
         self._init_menubar()
@@ -860,7 +880,7 @@ class MainWindow(QMainWindow):
     def _init_editor_preview_splitter(self):
         """Initializes the Markdown editor, preview pane, and the QSplitter that manages them."""
         self.editor = MarkdownEditor(parent=self, main_window=self)
-        self.preview = MarkdownPreview()
+        self.preview = MarkdownPreview(md_parser=self.md_parser)
         self.editor.contentChanged.connect(self._on_editor_content_changed)
 
         # The main splitter that divides the library panel from the editor/preview area
