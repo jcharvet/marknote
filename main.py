@@ -2278,7 +2278,7 @@ class GrammarDiffDialog(QDialog):
         self.original = original.splitlines(keepends=True)
         self.corrected = corrected.splitlines(keepends=True)
         self.diffs = list(difflib.ndiff(self.original, self.corrected))
-        self.accepted = [d for d in self.diffs]
+        self.accepted = set(i for i, d in enumerate(self.diffs) if not d.startswith("-") or d.startswith(" "))
         self.index = 0
         self.layout = QVBoxLayout(self)
         self.diff_label = QLabel()
@@ -2296,16 +2296,12 @@ class GrammarDiffDialog(QDialog):
         btn_layout.addWidget(self.reject_btn)
         btn_layout.addWidget(self.next_btn)
         self.layout.addLayout(btn_layout)
-        self.apply_btn = QPushButton("Apply Changes")
-        self.layout.addWidget(self.apply_btn)
         self.accept_btn.clicked.connect(self.accept_change)
         self.reject_btn.clicked.connect(self.reject_change)
         self.next_btn.clicked.connect(self.next_change)
         self.prev_btn.clicked.connect(self.prev_change)
-        self.apply_btn.clicked.connect(self.accept)
         self.update_ui()
     def update_ui(self):
-        # Find next change
         changes = [i for i, d in enumerate(self.diffs) if d.startswith("-") or d.startswith("+")]
         if not changes:
             self.diff_label.setText("No changes detected.")
@@ -2317,15 +2313,18 @@ class GrammarDiffDialog(QDialog):
         d = self.diffs[idx]
         context = ''.join(self.diffs[max(0, idx-2):idx+3])
         self.diff_label.setText(f"Change {self.index+1}/{len(changes)}:\n{context}")
-        # Build preview with accepted changes
         preview = []
-        for line in self.diffs:
-            if line.startswith("-") and line not in self.accepted:
-                continue
-            if line.startswith("+") and line not in self.accepted:
-                continue
-            if line.startswith("-") or line.startswith("+"):
-                preview.append(line[2:])
+        for i, line in enumerate(self.diffs):
+            if line.startswith("-"):
+                if i in self.accepted:
+                    continue  # skip deletions if accepted (means we want the addition)
+                else:
+                    continue  # skip deletions if not accepted
+            elif line.startswith("+"):
+                if i in self.accepted:
+                    preview.append(line[2:])
+                else:
+                    continue
             elif line.startswith(" "):
                 preview.append(line[2:])
         self.preview_box.setPlainText(''.join(preview))
@@ -2333,16 +2332,21 @@ class GrammarDiffDialog(QDialog):
         changes = [i for i, d in enumerate(self.diffs) if d.startswith("-") or d.startswith("+")]
         if not changes: return
         idx = changes[self.index]
-        if self.diffs[idx] not in self.accepted:
-            self.accepted.append(self.diffs[idx])
-        self.next_change()
+        self.accepted.add(idx)
+        if self.index == len(changes) - 1:
+            self.accept()
+        else:
+            self.next_change()
     def reject_change(self):
         changes = [i for i, d in enumerate(self.diffs) if d.startswith("-") or d.startswith("+")]
         if not changes: return
         idx = changes[self.index]
-        if self.diffs[idx] in self.accepted:
-            self.accepted.remove(self.diffs[idx])
-        self.next_change()
+        if idx in self.accepted:
+            self.accepted.remove(idx)
+        if self.index == len(changes) - 1:
+            self.accept()
+        else:
+            self.next_change()
     def next_change(self):
         changes = [i for i, d in enumerate(self.diffs) if d.startswith("-") or d.startswith("+")]
         if self.index < len(changes) - 1:
@@ -2354,15 +2358,18 @@ class GrammarDiffDialog(QDialog):
             self.index -= 1
         self.update_ui()
     def get_merged_text(self):
-        # Build merged text from accepted changes
         preview = []
-        for line in self.diffs:
-            if line.startswith("-") and line not in self.accepted:
-                continue
-            if line.startswith("+") and line not in self.accepted:
-                continue
-            if line.startswith("-") or line.startswith("+"):
-                preview.append(line[2:])
+        for i, line in enumerate(self.diffs):
+            if line.startswith("-"):
+                if i in self.accepted:
+                    continue
+                else:
+                    continue
+            elif line.startswith("+"):
+                if i in self.accepted:
+                    preview.append(line[2:])
+                else:
+                    continue
             elif line.startswith(" "):
                 preview.append(line[2:])
         return ''.join(preview)
