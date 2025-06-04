@@ -28,7 +28,7 @@ from config_utils import (
 
 import PyQt6.QtCore # For version diagnostics
 import PyQt6.QtWebEngineCore # For version diagnostics
-from PyQt6.QtCore import Qt, QTimer, QEventLoop, QEvent, QPoint, QByteArray, QMimeData, QUrl, pyqtSignal # Added QByteArray, QMimeData, QUrl, pyqtSignal
+from PyQt6.QtCore import Qt, QTimer, QEventLoop, QEvent, QPoint, QByteArray, QMimeData, QUrl, pyqtSignal, pyqtSlot, QObject # Added QByteArray, QMimeData, QUrl, pyqtSignal, pyqtSlot, QObject
 from PyQt6.QtGui import QAction, QKeySequence, QFont, QColor, QTextCharFormat, QTextCursor, QDesktopServices, QIcon, QPalette, QKeyEvent
 from PyQt6.QtWidgets import (
     QApplication, QFileDialog, QHBoxLayout, QInputDialog, QLineEdit,
@@ -38,6 +38,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.Qsci import QsciLexerMarkdown, QsciScintilla
 from PyQt6.QtWebEngineWidgets import QWebEngineView # QWebEngineView already imported
 from PyQt6.QtWebEngineCore import QWebEngineSettings, QWebEnginePage # Added for PDF preview settings
+from PyQt6.QtWebChannel import QWebChannel
 from PIL import Image
 from langdetect import detect, LangDetectException
 
@@ -309,6 +310,32 @@ class MarkdownEditor(QsciScintilla):
         """Clears all text from the editor."""
         self.setText("")                
 
+class WikiLinkPage(QWebEnginePage):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._main_window = parent
+    def acceptNavigationRequest(self, url, nav_type, is_main_frame):
+        url_str = url.toString()
+        if url_str.startswith('wikilink://'):
+            page = url_str[len('wikilink://'):].replace('%20', ' ')
+            if self._main_window:
+                self._main_window.handle_wiki_link(page)
+            return False
+        return super().acceptNavigationRequest(url, nav_type, is_main_frame)
+    def createWindow(self, _type):
+        return self
+
+class WikiLinkBridge(QObject):
+    def __init__(self, main_window):
+        super().__init__()
+        self.main_window = main_window
+    @pyqtSlot(str)
+    def openWikiLink(self, page_name):
+        if self.main_window is not None:
+            self.main_window.handle_wiki_link(page_name)
+        else:
+            print("WikiLinkBridge: main_window is None! Cannot handle wiki link.")
+
 class MarkdownPreview(QWebEngineView):
     """
     A custom QWebEngineView widget for rendering Markdown as HTML.
@@ -329,22 +356,53 @@ class MarkdownPreview(QWebEngineView):
         self.current_html: str = ""
         self.base_url: QUrl = QUrl()
         self.md_parser = md_parser
+        self.channel = QWebChannel(self.page())
+        # Ensure bridge gets the real MainWindow
+        main_window = parent if parent is not None else QApplication.activeWindow()
+        self.bridge = WikiLinkBridge(main_window)
+        self.channel.registerObject("wikilinkBridge", self.bridge)
+        self.page().setWebChannel(self.channel)
         # Note: QWebEngineSettings.WebAttribute.PrintSupportEnabled was problematic and removed.
         # Printing is handled via QPrintDialog and page().print() in MainWindow.
 
     def set_markdown(self, text: str, base_url: QUrl = None):
+        import re
         def mermaid_replacer(match: re.Match) -> str:
             code = match.group(1)
             return f'<div class="mermaid">{code}</div>'
         mermaid_pattern = re.compile(r'```mermaid\s*([\s\S]*?)```', re.MULTILINE)
         text_with_mermaid_divs = mermaid_pattern.sub(mermaid_replacer, text)
-
+        def wiki_link_replacer(match: re.Match) -> str:
+            page = match.group(1).strip()
+            href = f"wikilink://{page.replace(' ', '%20')}"
+            return f'<a href="{href}" class="wikilink">[[{page}]]</a>'
+        wiki_pattern = re.compile(r'\[\[([^\]]+)\]\]')
+        text_with_wikilinks = wiki_pattern.sub(wiki_link_replacer, text_with_mermaid_divs)
         if self.md_parser:
-            html_body = self.md_parser.convert(text_with_mermaid_divs)
-            self.md_parser.reset() # Important for ToC and other stateful extensions
+            html_body = self.md_parser.convert(text_with_wikilinks)
+            self.md_parser.reset()
         else:
-            # Fallback if parser not provided (should not happen in normal operation)
-            html_body = markdown.markdown(text_with_mermaid_divs, extensions=['fenced_code', 'extra', 'md_in_html'])
+            html_body = markdown.markdown(text_with_wikilinks, extensions=['fenced_code', 'extra', 'md_in_html'])
+        # Inject JS for wiki-link interception
+        injected_js = r'''
+        <script type="text/javascript" src="qrc:///qtwebchannel/qwebchannel.js"></script>
+        <script>
+        document.addEventListener("DOMContentLoaded", function() {
+            if (typeof QWebChannel !== 'undefined') {
+                new QWebChannel(qt.webChannelTransport, function(channel) {
+                    window.wikilinkBridge = channel.objects.wikilinkBridge;
+                    document.querySelectorAll('a.wikilink').forEach(function(link) {
+                        link.addEventListener('click', function(e) {
+                            e.preventDefault();
+                            var page = link.textContent.replace(/^\[\[|\]\]$/g, '').trim();
+                            window.wikilinkBridge.openWikiLink(page);
+                        });
+                    });
+                });
+            }
+        });
+        </script>
+        '''
         if '<div class="mermaid">' in html_body:
             from pathlib import Path
             mermaid_path = Path(__file__).parent / "_assets" / "mermaid.min.js"
@@ -358,6 +416,7 @@ class MarkdownPreview(QWebEngineView):
                     code {{ font-family: "Fira Mono", monospace; }}
                 </style>
                 <script src="{mermaid_url}"></script>
+                {injected_js}
                 <script>
                 document.addEventListener("DOMContentLoaded", function() {{
                   if (window.mermaid) {{
@@ -379,6 +438,7 @@ class MarkdownPreview(QWebEngineView):
                     pre {{ background-color: #f0f0f0; padding: 10px; border-radius: 5px; overflow-x: auto; }}
                     code {{ font-family: "Fira Mono", monospace; }}
                 </style>
+                {injected_js}
             </head>
             <body>{html_body}</body>
             </html>'''
@@ -920,7 +980,7 @@ class MainWindow(QMainWindow):
     def _init_editor_preview_stack(self):
         """Initializes the Markdown editor and preview, managed by a QStackedWidget."""
         self.editor = MarkdownEditor(parent=self, main_window=self)
-        self.preview = MarkdownPreview(md_parser=self.md_parser)
+        self.preview = MarkdownPreview(parent=self, md_parser=self.md_parser)
         self.editor.contentChanged.connect(self._on_editor_content_changed)
 
         self.stack = QStackedWidget()
@@ -2250,6 +2310,21 @@ class MainWindow(QMainWindow):
         config = load_app_config()
         config['sidebar_visible'] = visible
         save_app_config(config)
+
+    def handle_wiki_link(self, page_name):
+        from pathlib import Path
+        base = Path(self.default_folder)
+        candidates = list(base.rglob(f"{page_name}.md"))
+        if candidates:
+            self.open_file(str(candidates[0]))
+        else:
+            from PyQt6.QtWidgets import QMessageBox
+            resp = QMessageBox.question(self, "Create Page?", f"Page '{page_name}' does not exist. Create it?", QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+            if resp == QMessageBox.StandardButton.Yes:
+                new_path = base / f"{page_name}.md"
+                with open(new_path, 'w', encoding='utf-8') as f:
+                    f.write(f"# {page_name}\n\n")
+                self.open_file(str(new_path))
 
 if __name__ == "__main__":
     # Standard PyQt application setup
