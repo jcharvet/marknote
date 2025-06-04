@@ -2236,7 +2236,7 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage("AI is checking grammar and style...", 3000)
         result = self.ai.grammar_style_check(text, language)
         corrected, suggestions = self._parse_grammar_result(result)
-        dlg = GrammarDiffDialog(text, corrected, self)
+        dlg = GrammarBlockDiffDialog(text, corrected, self)
         if dlg.exec() == QDialog.DialogCode.Accepted:
             merged = dlg.get_merged_text()
             if self.editor.selectedText():
@@ -2270,22 +2270,27 @@ class MainWindow(QMainWindow):
             self.language_override = None
             self.update_language_label()
 
-class GrammarDiffDialog(QDialog):
+class GrammarBlockDiffDialog(QDialog):
     def __init__(self, original, corrected, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("AI Grammar & Style Review")
-        self.resize(800, 600)
-        self.original = original.splitlines(keepends=True)
-        self.corrected = corrected.splitlines(keepends=True)
-        self.diffs = list(difflib.ndiff(self.original, self.corrected))
-        self.accepted = set(i for i, d in enumerate(self.diffs) if not d.startswith("-") or d.startswith(" "))
+        self.setWindowTitle("AI Grammar & Style Review (Block Level)")
+        self.resize(900, 600)
+        self.original_blocks = self._split_blocks(original)
+        self.corrected_blocks = self._split_blocks(corrected)
+        self.changes = self._pair_blocks(self.original_blocks, self.corrected_blocks)
+        self.accepted = [False] * len(self.changes)
         self.index = 0
         self.layout = QVBoxLayout(self)
-        self.diff_label = QLabel()
-        self.layout.addWidget(self.diff_label)
-        self.preview_box = QTextEdit()
-        self.preview_box.setReadOnly(True)
-        self.layout.addWidget(self.preview_box)
+        self.orig_label = QLabel("Original Block:")
+        self.layout.addWidget(self.orig_label)
+        self.orig_box = QTextEdit()
+        self.orig_box.setReadOnly(True)
+        self.layout.addWidget(self.orig_box)
+        self.corr_label = QLabel("Corrected Block:")
+        self.layout.addWidget(self.corr_label)
+        self.corr_box = QTextEdit()
+        self.corr_box.setReadOnly(True)
+        self.layout.addWidget(self.corr_box)
         btn_layout = QHBoxLayout()
         self.accept_btn = QPushButton("Accept")
         self.reject_btn = QPushButton("Reject")
@@ -2301,78 +2306,61 @@ class GrammarDiffDialog(QDialog):
         self.next_btn.clicked.connect(self.next_change)
         self.prev_btn.clicked.connect(self.prev_change)
         self.update_ui()
+    def _split_blocks(self, text):
+        # Split by double newline or Markdown block (simple version)
+        import re
+        blocks = re.split(r'\n\s*\n', text.strip())
+        return [b.strip() for b in blocks if b.strip()]
+    def _pair_blocks(self, orig_blocks, corr_blocks):
+        # Pair blocks by order, only if different
+        import difflib
+        pairs = []
+        matcher = difflib.SequenceMatcher(None, orig_blocks, corr_blocks)
+        for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+            if tag == 'equal':
+                for k in range(i2 - i1):
+                    pairs.append((orig_blocks[i1 + k], corr_blocks[j1 + k], False))
+            elif tag in ('replace', 'delete', 'insert'):
+                for k in range(max(i2 - i1, j2 - j1)):
+                    o = orig_blocks[i1 + k] if i1 + k < i2 else ''
+                    c = corr_blocks[j1 + k] if j1 + k < j2 else ''
+                    pairs.append((o, c, True))
+        return pairs
     def update_ui(self):
-        changes = [i for i, d in enumerate(self.diffs) if d.startswith("-") or d.startswith("+")]
-        if not changes:
-            self.diff_label.setText("No changes detected.")
-            self.preview_box.setPlainText(''.join(self.original))
-            return
-        if self.index < 0: self.index = 0
-        if self.index >= len(changes): self.index = len(changes) - 1
-        idx = changes[self.index]
-        d = self.diffs[idx]
-        context = ''.join(self.diffs[max(0, idx-2):idx+3])
-        self.diff_label.setText(f"Change {self.index+1}/{len(changes)}:\n{context}")
-        preview = []
-        for i, line in enumerate(self.diffs):
-            if line.startswith("-"):
-                if i in self.accepted:
-                    continue  # skip deletions if accepted (means we want the addition)
-                else:
-                    continue  # skip deletions if not accepted
-            elif line.startswith("+"):
-                if i in self.accepted:
-                    preview.append(line[2:])
-                else:
-                    continue
-            elif line.startswith(" "):
-                preview.append(line[2:])
-        self.preview_box.setPlainText(''.join(preview))
-    def accept_change(self):
-        changes = [i for i, d in enumerate(self.diffs) if d.startswith("-") or d.startswith("+")]
-        if not changes: return
-        idx = changes[self.index]
-        self.accepted.add(idx)
-        if self.index == len(changes) - 1:
-            self.accept()
-        else:
-            self.next_change()
-    def reject_change(self):
-        changes = [i for i, d in enumerate(self.diffs) if d.startswith("-") or d.startswith("+")]
-        if not changes: return
-        idx = changes[self.index]
-        if idx in self.accepted:
-            self.accepted.remove(idx)
-        if self.index == len(changes) - 1:
-            self.accept()
-        else:
-            self.next_change()
-    def next_change(self):
-        changes = [i for i, d in enumerate(self.diffs) if d.startswith("-") or d.startswith("+")]
-        if self.index < len(changes) - 1:
+        # Skip unchanged blocks
+        while self.index < len(self.changes) and not self.changes[self.index][2]:
             self.index += 1
+        while self.index >= 0 and self.index < len(self.changes) and not self.changes[self.index][2]:
+            self.index -= 1
+        if self.index < 0 or self.index >= len(self.changes):
+            self.accept()
+            return
+        orig, corr, changed = self.changes[self.index]
+        self.orig_box.setPlainText(orig)
+        self.corr_box.setPlainText(corr)
+        self.orig_label.setText(f"Original Block ({self.index+1}/{len(self.changes)})")
+        self.corr_label.setText(f"Corrected Block ({self.index+1}/{len(self.changes)})")
+    def accept_change(self):
+        self.accepted[self.index] = True
+        self.next_change()
+    def reject_change(self):
+        self.accepted[self.index] = False
+        self.next_change()
+    def next_change(self):
+        self.index += 1
         self.update_ui()
     def prev_change(self):
-        changes = [i for i, d in enumerate(self.diffs) if d.startswith("-") or d.startswith("+")]
         if self.index > 0:
             self.index -= 1
         self.update_ui()
     def get_merged_text(self):
-        preview = []
-        for i, line in enumerate(self.diffs):
-            if line.startswith("-"):
-                if i in self.accepted:
-                    continue
-                else:
-                    continue
-            elif line.startswith("+"):
-                if i in self.accepted:
-                    preview.append(line[2:])
-                else:
-                    continue
-            elif line.startswith(" "):
-                preview.append(line[2:])
-        return ''.join(preview)
+        merged = []
+        for (orig, corr, changed), accept in zip(self.changes, self.accepted):
+            if changed:
+                merged.append(corr if accept else orig)
+            else:
+                merged.append(orig)
+        return '\n\n'.join([b for b in merged if b.strip()])
 
 if __name__ == "__main__":
     # Standard PyQt application setup
