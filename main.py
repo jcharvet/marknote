@@ -17,6 +17,7 @@ import logging
 import hashlib
 import secrets
 import datetime
+import difflib
 
 from config_utils import (
     load_app_config, save_app_config,
@@ -2234,38 +2235,14 @@ class MainWindow(QMainWindow):
             return
         self.statusBar().showMessage("AI is checking grammar and style...", 3000)
         result = self.ai.grammar_style_check(text, language)
-        # Parse result: expect corrected text and suggestions separated by a line with 'Suggestions:'
         corrected, suggestions = self._parse_grammar_result(result)
-        dlg = QDialog(self)
-        dlg.setWindowTitle("AI Grammar & Style Suggestions")
-        layout = QVBoxLayout(dlg)
-        layout.addWidget(QLabel("Original:"))
-        orig_box = QTextEdit()
-        orig_box.setPlainText(text)
-        orig_box.setReadOnly(True)
-        layout.addWidget(orig_box)
-        layout.addWidget(QLabel("Corrected:"))
-        corr_box = QTextEdit()
-        corr_box.setPlainText(corrected)
-        corr_box.setReadOnly(True)
-        layout.addWidget(corr_box)
-        if suggestions:
-            layout.addWidget(QLabel("Suggestions:"))
-            sugg_list = QListWidget()
-            for s in suggestions:
-                sugg_list.addItem(s)
-            layout.addWidget(sugg_list)
-        btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
-        layout.addWidget(btns)
-        def on_accept():
+        dlg = GrammarDiffDialog(text, corrected, self)
+        if dlg.exec() == QDialog.Accepted:
+            merged = dlg.get_merged_text()
             if self.editor.selectedText():
-                self.editor.replaceSelectedText(corrected)
+                self.editor.replaceSelectedText(merged)
             else:
-                self.editor.setPlainText(corrected)
-            dlg.accept()
-        btns.accepted.connect(on_accept)
-        btns.rejected.connect(dlg.reject)
-        dlg.exec()
+                self.editor.setPlainText(merged)
 
     def _parse_grammar_result(self, result: str):
         # Naive split: look for first bullet list or 'Suggestions:'
@@ -2292,6 +2269,103 @@ class MainWindow(QMainWindow):
         else:
             self.language_override = None
             self.update_language_label()
+
+class GrammarDiffDialog(QDialog):
+    def __init__(self, original, corrected, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("AI Grammar & Style Review")
+        self.resize(800, 600)
+        self.original = original.splitlines(keepends=True)
+        self.corrected = corrected.splitlines(keepends=True)
+        self.diffs = list(difflib.ndiff(self.original, self.corrected))
+        self.accepted = [d for d in self.diffs]
+        self.index = 0
+        self.layout = QVBoxLayout(self)
+        self.diff_label = QLabel()
+        self.layout.addWidget(self.diff_label)
+        self.preview_box = QTextEdit()
+        self.preview_box.setReadOnly(True)
+        self.layout.addWidget(self.preview_box)
+        btn_layout = QHBoxLayout()
+        self.accept_btn = QPushButton("Accept")
+        self.reject_btn = QPushButton("Reject")
+        self.next_btn = QPushButton("Next")
+        self.prev_btn = QPushButton("Prev")
+        btn_layout.addWidget(self.prev_btn)
+        btn_layout.addWidget(self.accept_btn)
+        btn_layout.addWidget(self.reject_btn)
+        btn_layout.addWidget(self.next_btn)
+        self.layout.addLayout(btn_layout)
+        self.apply_btn = QPushButton("Apply Changes")
+        self.layout.addWidget(self.apply_btn)
+        self.accept_btn.clicked.connect(self.accept_change)
+        self.reject_btn.clicked.connect(self.reject_change)
+        self.next_btn.clicked.connect(self.next_change)
+        self.prev_btn.clicked.connect(self.prev_change)
+        self.apply_btn.clicked.connect(self.accept)
+        self.update_ui()
+    def update_ui(self):
+        # Find next change
+        changes = [i for i, d in enumerate(self.diffs) if d.startswith("-") or d.startswith("+")]
+        if not changes:
+            self.diff_label.setText("No changes detected.")
+            self.preview_box.setPlainText(''.join(self.original))
+            return
+        if self.index < 0: self.index = 0
+        if self.index >= len(changes): self.index = len(changes) - 1
+        idx = changes[self.index]
+        d = self.diffs[idx]
+        context = ''.join(self.diffs[max(0, idx-2):idx+3])
+        self.diff_label.setText(f"Change {self.index+1}/{len(changes)}:\n{context}")
+        # Build preview with accepted changes
+        preview = []
+        for line in self.diffs:
+            if line.startswith("-") and line not in self.accepted:
+                continue
+            if line.startswith("+") and line not in self.accepted:
+                continue
+            if line.startswith("-") or line.startswith("+"):
+                preview.append(line[2:])
+            elif line.startswith(" "):
+                preview.append(line[2:])
+        self.preview_box.setPlainText(''.join(preview))
+    def accept_change(self):
+        changes = [i for i, d in enumerate(self.diffs) if d.startswith("-") or d.startswith("+")]
+        if not changes: return
+        idx = changes[self.index]
+        if self.diffs[idx] not in self.accepted:
+            self.accepted.append(self.diffs[idx])
+        self.next_change()
+    def reject_change(self):
+        changes = [i for i, d in enumerate(self.diffs) if d.startswith("-") or d.startswith("+")]
+        if not changes: return
+        idx = changes[self.index]
+        if self.diffs[idx] in self.accepted:
+            self.accepted.remove(self.diffs[idx])
+        self.next_change()
+    def next_change(self):
+        changes = [i for i, d in enumerate(self.diffs) if d.startswith("-") or d.startswith("+")]
+        if self.index < len(changes) - 1:
+            self.index += 1
+        self.update_ui()
+    def prev_change(self):
+        changes = [i for i, d in enumerate(self.diffs) if d.startswith("-") or d.startswith("+")]
+        if self.index > 0:
+            self.index -= 1
+        self.update_ui()
+    def get_merged_text(self):
+        # Build merged text from accepted changes
+        preview = []
+        for line in self.diffs:
+            if line.startswith("-") and line not in self.accepted:
+                continue
+            if line.startswith("+") and line not in self.accepted:
+                continue
+            if line.startswith("-") or line.startswith("+"):
+                preview.append(line[2:])
+            elif line.startswith(" "):
+                preview.append(line[2:])
+        return ''.join(preview)
 
 if __name__ == "__main__":
     # Standard PyQt application setup
