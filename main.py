@@ -550,6 +550,13 @@ class MainWindow(QMainWindow):
         self.toggle_mode_action.triggered.connect(self.toggle_mode)
         self.toolbar.addAction(self.toggle_mode_action)
 
+        # In MainWindow.__init__, after self.toolbar and self.library_panel are initialized:
+        self.toggle_sidebar_action = QAction("Toggle Sidebar", self)
+        self.toggle_sidebar_action.setCheckable(True)
+        self.toggle_sidebar_action.setChecked(True)
+        self.toggle_sidebar_action.triggered.connect(self.toggle_sidebar)
+        self.toolbar.addAction(self.toggle_sidebar_action)
+
     def _toggle_preview_pane(self):
         """Toggles the visibility of the HTML preview pane and saves the state."""
         is_visible = not self.preview.isVisible()
@@ -2234,6 +2241,15 @@ class MainWindow(QMainWindow):
             self.stack.setCurrentIndex(0)
             self.toggle_mode_action.setText("Edit")
             self.current_mode = 'preview'
+
+    def toggle_sidebar(self):
+        visible = not self.library_panel.isVisible()
+        self.library_panel.setVisible(visible)
+        self.toggle_sidebar_action.setChecked(visible)
+        # Save sidebar visibility in config
+        config = load_app_config()
+        config['sidebar_visible'] = visible
+        save_app_config(config)
 
 if __name__ == "__main__":
     # Standard PyQt application setup
