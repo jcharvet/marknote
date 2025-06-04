@@ -991,6 +991,27 @@ class MainWindow(QMainWindow):
         self.search_bar.textChanged.connect(self.filter_library)
         library_layout.addWidget(self.search_bar)
 
+        # --- AI Sidebar Buttons ---
+        self.ai_summary_btn = QPushButton("Summarize Page")
+        self.ai_summary_btn.setStyleSheet("background: #23252b; color: #61AFEF; border: none; padding: 5px;")
+        self.ai_summary_btn.clicked.connect(self.ai_summarize_page)
+        library_layout.addWidget(self.ai_summary_btn)
+
+        self.ai_related_btn = QPushButton("Related Pages")
+        self.ai_related_btn.setStyleSheet("background: #23252b; color: #61AFEF; border: none; padding: 5px;")
+        self.ai_related_btn.clicked.connect(self.ai_find_related_pages)
+        library_layout.addWidget(self.ai_related_btn)
+
+        self.ai_semantic_search_btn = QPushButton("Semantic Search")
+        self.ai_semantic_search_btn.setStyleSheet("background: #23252b; color: #61AFEF; border: none; padding: 5px;")
+        self.ai_semantic_search_btn.clicked.connect(self.ai_semantic_search)
+        library_layout.addWidget(self.ai_semantic_search_btn)
+
+        self.ai_autolink_btn = QPushButton("Auto-Link")
+        self.ai_autolink_btn.setStyleSheet("background: #23252b; color: #61AFEF; border: none; padding: 5px;")
+        self.ai_autolink_btn.clicked.connect(self.ai_autolink_page)
+        library_layout.addWidget(self.ai_autolink_btn)
+
         self.folder_btn = QPushButton("New Folder")
         self.folder_btn.clicked.connect(self.create_folder)
         self.folder_btn.setStyleSheet("background: #282c34; color: #98c379; border: none; padding: 5px;")
@@ -1378,6 +1399,12 @@ class MainWindow(QMainWindow):
         refine_action = menu.addAction("Refine with AI")
         analyze_action = menu.addAction("Analyze Document with AI")
         menu.addSeparator()
+        # --- New AI Actions ---
+        ai_summary_action = menu.addAction("Summarize Page")
+        ai_autolink_action = menu.addAction("Auto-Link Page")
+        ai_related_action = menu.addAction("Find Related Pages")
+        ai_semantic_search_action = menu.addAction("Semantic Search")
+        menu.addSeparator()
         # Command Bar Actions
         command_bar_action = menu.addAction("Show AI Command Bar")
         # nlp_command_action = menu.addAction("AI Command (Natural Language)") # This seems redundant if command bar handles NLP
@@ -1386,6 +1413,10 @@ class MainWindow(QMainWindow):
         expand_action.triggered.connect(self.expand_selected_text)
         refine_action.triggered.connect(self.refine_selected_text)
         analyze_action.triggered.connect(self.analyze_document)
+        ai_summary_action.triggered.connect(self.ai_summarize_page)
+        ai_autolink_action.triggered.connect(self.ai_autolink_page)
+        ai_related_action.triggered.connect(self.ai_find_related_pages)
+        ai_semantic_search_action.triggered.connect(self.ai_semantic_search)
         command_bar_action.triggered.connect(self.show_command_bar)
         # nlp_command_action.triggered.connect(self.show_command_bar)
 
@@ -2353,6 +2384,19 @@ class MainWindow(QMainWindow):
                 with open(new_path, 'w', encoding='utf-8') as f:
                     f.write(f"# {page_name}\n\n")
                 self.open_file(str(new_path))
+
+    # --- AI Feature Placeholders ---
+    def ai_summarize_page(self):
+        QMessageBox.information(self, "AI Summarize", "[Stub] Summarize page feature coming soon.")
+
+    def ai_autolink_page(self):
+        QMessageBox.information(self, "AI Auto-Link", "[Stub] Auto-link feature coming soon.")
+
+    def ai_find_related_pages(self):
+        QMessageBox.information(self, "AI Related Pages", "[Stub] Related pages feature coming soon.")
+
+    def ai_semantic_search(self):
+        QMessageBox.information(self, "AI Semantic Search", "[Stub] Semantic search feature coming soon.")
 
 if __name__ == "__main__":
     # Standard PyQt application setup
