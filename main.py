@@ -2383,7 +2383,7 @@ class MainWindow(QMainWindow):
 
     # --- AI Feature Placeholders ---
     def ai_summarize_page(self):
-        """Summarize the current markdown document using AI and show the result in a dialog."""
+        """Summarize the current markdown document using AI and show the result in a dialog with copy option."""
         if not self.ai:
             from config_utils import load_gemini_api_key
             api_key = load_gemini_api_key()
@@ -2399,7 +2399,16 @@ class MainWindow(QMainWindow):
         try:
             summary = self.ai.summarize_document(full_text)
             if summary and not summary.startswith("Error:"):
-                QMessageBox.information(self, "Page Summary", summary)
+                # Custom dialog with copy button
+                msg_box = QMessageBox(self)
+                msg_box.setWindowTitle("Page Summary")
+                msg_box.setText(summary)
+                copy_btn = msg_box.addButton("Copy to Clipboard", QMessageBox.ButtonRole.ActionRole)
+                msg_box.addButton(QMessageBox.StandardButton.Ok)
+                msg_box.exec()
+                if msg_box.clickedButton() == copy_btn:
+                    QApplication.clipboard().setText(summary)
+                    self.statusBar().showMessage("Summary copied to clipboard.", 3000)
             else:
                 QMessageBox.critical(self, "AI Summarize Failed", f"Could not generate summary. AI response:\n{summary}")
         except Exception as e:
