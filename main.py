@@ -808,6 +808,24 @@ class MainWindow(QMainWindow):
         
         self.tools_menu.addSeparator()
 
+        # --- AI Tools Submenu ---
+        self.ai_tools_menu = QMenu("AI Tools", self)
+        ai_summary_action = QAction("Summarize Page", self)
+        ai_summary_action.triggered.connect(self.ai_summarize_page)
+        self.ai_tools_menu.addAction(ai_summary_action)
+        ai_autolink_action = QAction("Auto-Link Page", self)
+        ai_autolink_action.triggered.connect(self.ai_autolink_page)
+        self.ai_tools_menu.addAction(ai_autolink_action)
+        ai_related_action = QAction("Find Related Pages", self)
+        ai_related_action.triggered.connect(self.ai_find_related_pages)
+        self.ai_tools_menu.addAction(ai_related_action)
+        ai_semantic_search_action = QAction("Semantic Search", self)
+        ai_semantic_search_action.triggered.connect(self.ai_semantic_search)
+        self.ai_tools_menu.addAction(ai_semantic_search_action)
+        self.tools_menu.addMenu(self.ai_tools_menu)
+
+        self.tools_menu.addSeparator()
+
         ai_command_action = QAction("AI Command", self)
         ai_command_action.setShortcut(QKeySequence("Ctrl+Shift+Space"))
         ai_command_action.triggered.connect(lambda: self.ai_prompt_action('command'))
@@ -990,27 +1008,6 @@ class MainWindow(QMainWindow):
         self.search_bar.setPlaceholderText("Search documents...")
         self.search_bar.textChanged.connect(self.filter_library)
         library_layout.addWidget(self.search_bar)
-
-        # --- AI Sidebar Buttons ---
-        self.ai_summary_btn = QPushButton("Summarize Page")
-        self.ai_summary_btn.setStyleSheet("background: #23252b; color: #61AFEF; border: none; padding: 5px;")
-        self.ai_summary_btn.clicked.connect(self.ai_summarize_page)
-        library_layout.addWidget(self.ai_summary_btn)
-
-        self.ai_related_btn = QPushButton("Related Pages")
-        self.ai_related_btn.setStyleSheet("background: #23252b; color: #61AFEF; border: none; padding: 5px;")
-        self.ai_related_btn.clicked.connect(self.ai_find_related_pages)
-        library_layout.addWidget(self.ai_related_btn)
-
-        self.ai_semantic_search_btn = QPushButton("Semantic Search")
-        self.ai_semantic_search_btn.setStyleSheet("background: #23252b; color: #61AFEF; border: none; padding: 5px;")
-        self.ai_semantic_search_btn.clicked.connect(self.ai_semantic_search)
-        library_layout.addWidget(self.ai_semantic_search_btn)
-
-        self.ai_autolink_btn = QPushButton("Auto-Link")
-        self.ai_autolink_btn.setStyleSheet("background: #23252b; color: #61AFEF; border: none; padding: 5px;")
-        self.ai_autolink_btn.clicked.connect(self.ai_autolink_page)
-        library_layout.addWidget(self.ai_autolink_btn)
 
         self.folder_btn = QPushButton("New Folder")
         self.folder_btn.clicked.connect(self.create_folder)
