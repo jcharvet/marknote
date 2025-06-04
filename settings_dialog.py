@@ -2,7 +2,7 @@ from pathlib import Path
 
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QLabel, QLineEdit, 
-    QPushButton, QFontComboBox, QSpinBox, QFileDialog, QDialogButtonBox, QMessageBox
+    QPushButton, QFontComboBox, QSpinBox, QFileDialog, QDialogButtonBox, QMessageBox, QRadioButton, QCheckBox
 )
 from PyQt6.QtGui import QFont
 
@@ -13,6 +13,9 @@ from config_utils import (
     CONFIG_KEY_EDITOR_FONT_FAMILY,
     CONFIG_KEY_EDITOR_FONT_SIZE
 )
+
+DEFAULT_VIEW_MODE_KEY = "default_view_mode"
+REMEMBER_LAST_MODE_KEY = "remember_last_view_mode"
 
 class SettingsDialog(QDialog):
     """Dialog for managing application settings."""
@@ -53,6 +56,16 @@ class SettingsDialog(QDialog):
         self.font_size_spinbox.setMaximum(72)
         form_layout.addRow(QLabel("Editor Font Size:"), self.font_size_spinbox)
 
+        # --- View Mode Options ---
+        view_mode_layout = QHBoxLayout()
+        self.radio_preview = QRadioButton("Preview (HTML)")
+        self.radio_edit = QRadioButton("Edit (Markdown)")
+        view_mode_layout.addWidget(self.radio_preview)
+        view_mode_layout.addWidget(self.radio_edit)
+        form_layout.addRow(QLabel("Default View Mode:"), view_mode_layout)
+        self.remember_last_mode_checkbox = QCheckBox("Remember last used mode")
+        form_layout.addRow(QLabel(""), self.remember_last_mode_checkbox)
+
         layout.addLayout(form_layout)
 
         # Dialog buttons (OK, Cancel)
@@ -74,12 +87,23 @@ class SettingsDialog(QDialog):
         default_font_size = self.config.get(CONFIG_KEY_EDITOR_FONT_SIZE, 12)
         self.font_size_spinbox.setValue(default_font_size)
 
+        # View mode
+        default_mode = self.config.get(DEFAULT_VIEW_MODE_KEY, "preview")
+        if default_mode == "edit":
+            self.radio_edit.setChecked(True)
+        else:
+            self.radio_preview.setChecked(True)
+        self.remember_last_mode_checkbox.setChecked(self.config.get(REMEMBER_LAST_MODE_KEY, True))
+
     def _save_settings(self) -> bool:
         """Saves the current UI settings to the configuration file."""
         self.config[CONFIG_KEY_GEMINI_API_KEY] = self.api_key_edit.text().strip()
         self.config[CONFIG_KEY_DEFAULT_NOTES_FOLDER] = self.notes_folder_edit.text().strip()
         self.config[CONFIG_KEY_EDITOR_FONT_FAMILY] = self.font_family_combo.currentFont().family()
         self.config[CONFIG_KEY_EDITOR_FONT_SIZE] = self.font_size_spinbox.value()
+        # View mode
+        self.config[DEFAULT_VIEW_MODE_KEY] = "edit" if self.radio_edit.isChecked() else "preview"
+        self.config[REMEMBER_LAST_MODE_KEY] = self.remember_last_mode_checkbox.isChecked()
 
         if save_app_config(self.config):
             return True

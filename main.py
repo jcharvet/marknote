@@ -51,6 +51,10 @@ import requests
 from ai_prompt_dialog import AIPromptDialog
 from toc_utils import extract_headings, format_toc
 
+DEFAULT_VIEW_MODE_KEY = "default_view_mode"
+REMEMBER_LAST_MODE_KEY = "remember_last_view_mode"
+LAST_VIEW_MODE_KEY = "last_view_mode"
+
 class RecentFilesManager:
     """
     Manages the list of recently opened files.
@@ -616,6 +620,26 @@ class MainWindow(QMainWindow):
         self.toggle_sidebar_action.setChecked(True)
         self.toggle_sidebar_action.triggered.connect(self.toggle_sidebar)
         self.toolbar.addAction(self.toggle_sidebar_action)
+
+        # --- Restore view mode ---
+        remember_last = config.get(REMEMBER_LAST_MODE_KEY, True)
+        last_mode = config.get(LAST_VIEW_MODE_KEY, None)
+        default_mode = config.get(DEFAULT_VIEW_MODE_KEY, "preview")
+        if remember_last and last_mode in ("preview", "edit"):
+            self.set_view_mode(last_mode)
+        else:
+            self.set_view_mode(default_mode)
+
+    def set_view_mode(self, mode):
+        if mode == 'edit':
+            self.stack.setCurrentIndex(1)
+            self.toggle_mode_action.setText("Preview")
+            self.current_mode = 'edit'
+        else:
+            self.update_preview()
+            self.stack.setCurrentIndex(0)
+            self.toggle_mode_action.setText("Edit")
+            self.current_mode = 'preview'
 
     def _toggle_preview_pane(self):
         """Toggles the visibility of the HTML preview pane and saves the state."""
@@ -1781,24 +1805,20 @@ class MainWindow(QMainWindow):
         if SettingsDialog.get_settings(self):
             # Settings were saved, reload config and apply them
             config = load_app_config()
-
             # Apply editor font settings
             font_family = config.get(CONFIG_KEY_EDITOR_FONT_FAMILY, "Arial")
             font_size = config.get(CONFIG_KEY_EDITOR_FONT_SIZE, 12)
             new_font = QFont(font_family, font_size)
             self.editor.setFont(new_font)
-            if self.editor.lexer(): # Ensure lexer exists
+            if self.editor.lexer():
                 self.editor.lexer().setDefaultFont(new_font)
-            self.editor.setMarginsFont(new_font) # For line numbers margin
-
+            self.editor.setMarginsFont(new_font)
             # Apply default notes folder setting
             new_default_folder = config.get(CONFIG_KEY_DEFAULT_NOTES_FOLDER)
             if new_default_folder and Path(new_default_folder).is_dir() and new_default_folder != self.default_folder:
                 self.default_folder = new_default_folder
                 self.refresh_library()
-                QMessageBox.information(self, "Settings Applied", 
-                                        f"Default notes folder changed to: {new_default_folder}\n" 
-                                        "Editor font updated.")
+                QMessageBox.information(self, "Settings Applied", f"Default notes folder changed to: {new_default_folder}\nEditor font updated.")
             else:
                 QMessageBox.information(self, "Settings Applied", "Editor font updated.")
         else:
@@ -2291,16 +2311,13 @@ class MainWindow(QMainWindow):
 
     def toggle_mode(self):
         if self.current_mode == 'preview':
-            # Switch to editor
-            self.stack.setCurrentIndex(1)
-            self.toggle_mode_action.setText("Preview")
-            self.current_mode = 'edit'
+            self.set_view_mode('edit')
         else:
-            # Switch to preview
-            self.update_preview()
-            self.stack.setCurrentIndex(0)
-            self.toggle_mode_action.setText("Edit")
-            self.current_mode = 'preview'
+            self.set_view_mode('preview')
+        # Save last mode
+        config = load_app_config()
+        config[LAST_VIEW_MODE_KEY] = self.current_mode
+        save_app_config(config)
 
     def toggle_sidebar(self):
         visible = not self.library_panel.isVisible()
