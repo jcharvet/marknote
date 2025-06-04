@@ -412,3 +412,22 @@ sequenceDiagram
 ```
 """
         return self._gemini_request(prompt, max_tokens=600)
+
+    def summarize_document(self, markdown_text: str) -> str:
+        """
+        Summarizes a full Markdown document concisely.
+
+        Args:
+            markdown_text (str): The entire Markdown document content.
+
+        Returns:
+            str: A concise summary of the document, or an error message.
+        """
+        prompt = f"""
+You are an expert technical writing assistant. Summarize the following Markdown document in 3-5 sentences. Focus on the main ideas, topics, and any key points. Do not include explanations, markdown formatting, or conversational phrases—just the summary text.
+
+---document---
+{markdown_text}
+---end document---
+"""
+        return self._gemini_request(prompt, max_tokens=200)

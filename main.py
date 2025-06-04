@@ -2383,7 +2383,30 @@ class MainWindow(QMainWindow):
 
     # --- AI Feature Placeholders ---
     def ai_summarize_page(self):
-        QMessageBox.information(self, "AI Summarize", "[Stub] Summarize page feature coming soon.")
+        """Summarize the current markdown document using AI and show the result in a dialog."""
+        if not self.ai:
+            from config_utils import load_gemini_api_key
+            api_key = load_gemini_api_key()
+            if not api_key:
+                QMessageBox.warning(self, "API Key Missing", "Gemini API key not found. Please set it in Preferences.")
+                return
+            self.ai = AIMarkdownAssistant(api_key)
+        full_text = self.editor.toPlainText()
+        if not full_text.strip():
+            QMessageBox.information(self, "AI Summarize", "The document is empty.")
+            return
+        self.statusBar().showMessage("AI is summarizing the page...", 3000)
+        try:
+            summary = self.ai.summarize_document(full_text)
+            if summary and not summary.startswith("Error:"):
+                QMessageBox.information(self, "Page Summary", summary)
+            else:
+                QMessageBox.critical(self, "AI Summarize Failed", f"Could not generate summary. AI response:\n{summary}")
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            QMessageBox.critical(self, "AI Error", f"An unexpected error occurred: {e}")
+        self.statusBar().showMessage("AI summarization complete.", 3000)
 
     def ai_autolink_page(self):
         QMessageBox.information(self, "AI Auto-Link", "[Stub] Auto-link feature coming soon.")
