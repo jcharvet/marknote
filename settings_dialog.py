@@ -11,7 +11,8 @@ from config_utils import (
     CONFIG_KEY_GEMINI_API_KEY,
     CONFIG_KEY_DEFAULT_NOTES_FOLDER,
     CONFIG_KEY_EDITOR_FONT_FAMILY,
-    CONFIG_KEY_EDITOR_FONT_SIZE
+    CONFIG_KEY_EDITOR_FONT_SIZE,
+    CONFIG_KEY_SIDEBAR_VISIBLE
 )
 
 DEFAULT_VIEW_MODE_KEY = "default_view_mode"
@@ -66,6 +67,10 @@ class SettingsDialog(QDialog):
         self.remember_last_mode_checkbox = QCheckBox("Remember last used mode")
         form_layout.addRow(QLabel(""), self.remember_last_mode_checkbox)
 
+        # Sidebar visibility
+        self.sidebar_visible_checkbox = QCheckBox("Show sidebar by default")
+        form_layout.addRow(QLabel(""), self.sidebar_visible_checkbox)
+
         layout.addLayout(form_layout)
 
         # Dialog buttons (OK, Cancel)
@@ -94,6 +99,7 @@ class SettingsDialog(QDialog):
         else:
             self.radio_preview.setChecked(True)
         self.remember_last_mode_checkbox.setChecked(self.config.get(REMEMBER_LAST_MODE_KEY, True))
+        self.sidebar_visible_checkbox.setChecked(self.config.get(CONFIG_KEY_SIDEBAR_VISIBLE, True))
 
     def _save_settings(self) -> bool:
         """Saves the current UI settings to the configuration file."""
@@ -104,6 +110,7 @@ class SettingsDialog(QDialog):
         # View mode
         self.config[DEFAULT_VIEW_MODE_KEY] = "edit" if self.radio_edit.isChecked() else "preview"
         self.config[REMEMBER_LAST_MODE_KEY] = self.remember_last_mode_checkbox.isChecked()
+        self.config[CONFIG_KEY_SIDEBAR_VISIBLE] = self.sidebar_visible_checkbox.isChecked()
 
         if save_app_config(self.config):
             return True

@@ -23,7 +23,7 @@ from config_utils import (
     load_app_config, save_app_config,
     CONFIG_KEY_DEFAULT_NOTES_FOLDER, CONFIG_KEY_LAST_NOTE,
     CONFIG_FILE_NAME, CONFIG_KEY_GEMINI_API_KEY, CONFIG_KEY_EDITOR_FONT_FAMILY, CONFIG_KEY_EDITOR_FONT_SIZE,
-    CONFIG_KEY_PREVIEW_PANE_VISIBLE
+    CONFIG_KEY_PREVIEW_PANE_VISIBLE, CONFIG_KEY_SIDEBAR_VISIBLE
 )
 
 import PyQt6.QtCore # For version diagnostics
@@ -596,6 +596,12 @@ class MainWindow(QMainWindow):
         self.preview.setVisible(is_preview_visible)
         if hasattr(self, 'toggle_preview_action'): # Ensure action exists
             self.toggle_preview_action.setChecked(is_preview_visible)
+        
+        # --- Sidebar visibility ---
+        sidebar_visible = config.get(CONFIG_KEY_SIDEBAR_VISIBLE, True)
+        self.library_panel.setVisible(sidebar_visible)
+        if hasattr(self, 'toggle_sidebar_action'):
+            self.toggle_sidebar_action.setChecked(sidebar_visible)
         
         # Finalize UI setup (central widget, layout)
         self._setup_central_widget() 
@@ -1821,6 +1827,11 @@ class MainWindow(QMainWindow):
                 QMessageBox.information(self, "Settings Applied", f"Default notes folder changed to: {new_default_folder}\nEditor font updated.")
             else:
                 QMessageBox.information(self, "Settings Applied", "Editor font updated.")
+            # Apply sidebar visibility immediately
+            sidebar_visible = config.get(CONFIG_KEY_SIDEBAR_VISIBLE, True)
+            self.library_panel.setVisible(sidebar_visible)
+            if hasattr(self, 'toggle_sidebar_action'):
+                self.toggle_sidebar_action.setChecked(sidebar_visible)
         else:
             # Dialog was cancelled, or an error occurred during save in dialog
             pass # Optionally, log or inform user if specific feedback is needed
