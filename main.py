@@ -32,7 +32,7 @@ from PyQt6.QtCore import Qt, QTimer, QEventLoop, QEvent, QPoint, QByteArray, QMi
 from PyQt6.QtGui import QAction, QKeySequence, QFont, QColor, QTextCharFormat, QTextCursor, QDesktopServices, QIcon, QPalette, QKeyEvent
 from PyQt6.QtWidgets import (
     QApplication, QFileDialog, QHBoxLayout, QInputDialog, QLineEdit,
-    QMainWindow, QMenu, QMessageBox, QPushButton, QSplitter, QTextEdit,
+    QMainWindow, QMenu, QMessageBox, QPushButton, QStackedWidget, QTextEdit,
     QToolBar, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget, QDialog, QLabel, QDialogButtonBox, QListWidget, QComboBox
 )
 from PyQt6.Qsci import QsciLexerMarkdown, QsciScintilla
@@ -501,7 +501,8 @@ class MainWindow(QMainWindow):
         self.default_folder: str = self.get_or_create_default_folder()
         
         self.setWindowTitle("Marknote - Markdown Editor with AI")
-        self.resize(1100, 700) # Set initial window size
+        self.resize(1200, 800)  # Slightly larger default
+        self.setMinimumSize(900, 600)  # Prevent too-small window
         
         # State variables
         self.current_file: str | None = None # Path to the currently open file
@@ -521,8 +522,8 @@ class MainWindow(QMainWindow):
         
         # Initialize UI components by calling helper methods
         self._init_menubar()
-        self._init_library_panel() # Must be called before _init_editor_preview_splitter if splitter uses library_panel
-        self._init_editor_preview_splitter()
+        self._init_library_panel() # Must be called before _init_editor_preview_stack if stack uses library_panel
+        self._init_editor_preview_stack()
         self._init_command_bar()
 
         # Load and apply preview pane visibility state
@@ -539,6 +540,15 @@ class MainWindow(QMainWindow):
         self.recent_files_manager = RecentFilesManager()
         self.load_last_note() # Load the last opened note
         self.update_recent_files_menu() # Populate the "Open Recent" menu
+
+        # Add Edit/Preview toggle button to the main toolbar (always visible)
+        if not hasattr(self, 'toolbar'):
+            self.toolbar = QToolBar("Main Toolbar")
+            self.addToolBar(self.toolbar)
+        self.toggle_mode_action = QAction("Edit", self)
+        self.toggle_mode_action.setCheckable(False)
+        self.toggle_mode_action.triggered.connect(self.toggle_mode)
+        self.toolbar.addAction(self.toggle_mode_action)
 
     def _toggle_preview_pane(self):
         """Toggles the visibility of the HTML preview pane and saves the state."""
@@ -833,21 +843,24 @@ class MainWindow(QMainWindow):
         tools_menu.addAction(toc_action)
 
     def _setup_central_widget(self):
-        """
-        Sets up the central widget, layout, and integrates the main UI components
-        (splitter, command bar).
-        """
         central_widget = QWidget()
         central_layout = QVBoxLayout()
-        central_layout.setContentsMargins(0, 0, 0, 0) # No margins for the main layout
-        central_layout.setSpacing(0) # No spacing between widgets in this layout
+        central_layout.setContentsMargins(0, 0, 0, 0)
+        central_layout.setSpacing(0)
         central_widget.setLayout(central_layout)
         self.setCentralWidget(central_widget)
 
-        # The splitter contains the library panel and the editor/preview area
-        central_layout.addWidget(self.splitter)
-        
-        # The AI command bar is added below the splitter
+        # Add the library panel and the stack (preview/editor)
+        main_layout = QHBoxLayout()
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
+        main_layout.addWidget(self.library_panel)
+        main_layout.addWidget(self.stack, 1)
+        main_container = QWidget()
+        main_container.setLayout(main_layout)
+        central_layout.addWidget(main_container)
+
+        # The AI command bar is added below the main area
         central_layout.addWidget(self.command_bar_widget)
 
         # Footer toolbar for language display
@@ -856,7 +869,6 @@ class MainWindow(QMainWindow):
         self.footer_toolbar.setStyleSheet("background: #23252b; color: #61AFEF; border-top: 1px solid #4b5263;")
         self.language_label = QLabel("Language: ...")
         self.footer_toolbar.addWidget(self.language_label)
-        # Language override dropdown
         self.language_override_combo = QComboBox()
         self.language_override_combo.setEditable(True)
         self.language_override_combo.setFixedWidth(120)
@@ -898,34 +910,18 @@ class MainWindow(QMainWindow):
         
         self.refresh_library()
 
-    def _init_editor_preview_splitter(self):
-        """Initializes the Markdown editor, preview pane, and the QSplitter that manages them."""
+    def _init_editor_preview_stack(self):
+        """Initializes the Markdown editor and preview, managed by a QStackedWidget."""
         self.editor = MarkdownEditor(parent=self, main_window=self)
         self.preview = MarkdownPreview(md_parser=self.md_parser)
         self.editor.contentChanged.connect(self._on_editor_content_changed)
 
-        # The main splitter that divides the library panel from the editor/preview area
-        self.splitter = QSplitter(Qt.Orientation.Horizontal) # Explicitly horizontal
+        self.stack = QStackedWidget()
+        self.stack.addWidget(self.preview)  # index 0: Preview (default)
+        self.stack.addWidget(self.editor)   # index 1: Editor
+        self.current_mode = 'preview'  # or 'edit'
 
-        # Add the library panel (already initialized) to the splitter
-        self.splitter.addWidget(self.library_panel) 
-
-        # Create a container widget for the editor and preview (to be split vertically or horizontally)
-        editor_preview_container = QWidget()
-        ep_layout = QHBoxLayout() # Editor and Preview side-by-side
-        ep_layout.setContentsMargins(0, 0, 0, 0)
-        ep_layout.setSpacing(0) # No spacing between editor and preview
-        editor_preview_container.setLayout(ep_layout)
-        
-        ep_layout.addWidget(self.editor, 2) # Editor takes 2/4 of space initially
-        ep_layout.addWidget(self.preview, 2) # Preview takes 2/4 of space initially
-        
-        self.splitter.addWidget(editor_preview_container)
-        self.splitter.setSizes([210, 950]) # Initial sizes for library and editor_preview_container
-
-        self.ai = AIMarkdownAssistant() # Initialize AI assistant
-
-        # Enable custom context menu for the editor (for AI actions)
+        self.ai = AIMarkdownAssistant()  # Initialize AI assistant
         self.editor.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.editor.customContextMenuRequested.connect(self.show_context_menu)
 
@@ -996,7 +992,7 @@ class MainWindow(QMainWindow):
     def _on_editor_content_changed(self):
         is_dirty = self.editor.toPlainText() != self.last_saved_text
         self.set_dirty(is_dirty)
-        self.update_preview()
+        # Do NOT call self.update_preview() here; preview only updates on mode switch
         self.update_language_label()
 
     def _update_window_title(self, filename: str | None = None, dirty: bool = False):
@@ -2225,6 +2221,19 @@ class MainWindow(QMainWindow):
         else:
             self.language_override = None
             self.update_language_label()
+
+    def toggle_mode(self):
+        if self.current_mode == 'preview':
+            # Switch to editor
+            self.stack.setCurrentIndex(1)
+            self.toggle_mode_action.setText("Preview")
+            self.current_mode = 'edit'
+        else:
+            # Switch to preview
+            self.update_preview()
+            self.stack.setCurrentIndex(0)
+            self.toggle_mode_action.setText("Edit")
+            self.current_mode = 'preview'
 
 if __name__ == "__main__":
     # Standard PyQt application setup
