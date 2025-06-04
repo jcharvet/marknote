@@ -808,24 +808,7 @@ class MainWindow(QMainWindow):
         
         self.tools_menu.addSeparator()
 
-        # --- AI Tools Submenu ---
-        self.ai_tools_menu = QMenu("AI Tools", self)
-        ai_summary_action = QAction("Summarize Page", self)
-        ai_summary_action.triggered.connect(self.ai_summarize_page)
-        self.ai_tools_menu.addAction(ai_summary_action)
-        ai_autolink_action = QAction("Auto-Link Page", self)
-        ai_autolink_action.triggered.connect(self.ai_autolink_page)
-        self.ai_tools_menu.addAction(ai_autolink_action)
-        ai_related_action = QAction("Find Related Pages", self)
-        ai_related_action.triggered.connect(self.ai_find_related_pages)
-        self.ai_tools_menu.addAction(ai_related_action)
-        ai_semantic_search_action = QAction("Semantic Search", self)
-        ai_semantic_search_action.triggered.connect(self.ai_semantic_search)
-        self.ai_tools_menu.addAction(ai_semantic_search_action)
-        self.tools_menu.addMenu(self.ai_tools_menu)
-
-        self.tools_menu.addSeparator()
-
+        # --- AI Actions (flat, grouped) ---
         ai_command_action = QAction("AI Command", self)
         ai_command_action.setShortcut(QKeySequence("Ctrl+Shift+Space"))
         ai_command_action.triggered.connect(lambda: self.ai_prompt_action('command'))
@@ -838,7 +821,23 @@ class MainWindow(QMainWindow):
         ai_create_mermaid_action = QAction("AI Create Mermaid Diagram...", self)
         ai_create_mermaid_action.triggered.connect(self.ai_create_mermaid_diagram)
         self.tools_menu.addAction(ai_create_mermaid_action)
-        
+
+        ai_summary_action = QAction("Summarize Page", self)
+        ai_summary_action.triggered.connect(self.ai_summarize_page)
+        self.tools_menu.addAction(ai_summary_action)
+
+        ai_autolink_action = QAction("Auto-Link Page", self)
+        ai_autolink_action.triggered.connect(self.ai_autolink_page)
+        self.tools_menu.addAction(ai_autolink_action)
+
+        ai_related_action = QAction("Find Related Pages", self)
+        ai_related_action.triggered.connect(self.ai_find_related_pages)
+        self.tools_menu.addAction(ai_related_action)
+
+        ai_semantic_search_action = QAction("Semantic Search", self)
+        ai_semantic_search_action.triggered.connect(self.ai_semantic_search)
+        self.tools_menu.addAction(ai_semantic_search_action)
+
         self.tools_menu.addSeparator()
 
         toc_action = QAction("Generate Table of Contents", self)
