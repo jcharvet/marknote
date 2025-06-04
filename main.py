@@ -720,10 +720,6 @@ class MainWindow(QMainWindow):
         toc_action.triggered.connect(self.insert_table_of_contents)
         self.tools_menu.addAction(toc_action)
 
-        grammar_action = QAction("Check Grammar & Style", self)
-        grammar_action.triggered.connect(self.check_grammar_style)
-        self.tools_menu.addAction(grammar_action)
-
         # --- Help Menu ---
         help_menu = menubar.addMenu("Help")
         syntax_action = QAction("Markdown & Mermaid Syntax", self)
@@ -835,9 +831,6 @@ class MainWindow(QMainWindow):
         toc_action = QAction("Generate Table of Contents", self)
         toc_action.triggered.connect(self.insert_table_of_contents)
         tools_menu.addAction(toc_action)
-        grammar_action = QAction("Check Grammar & Style", self)
-        grammar_action.triggered.connect(self.check_grammar_style)
-        tools_menu.addAction(grammar_action)
 
     def _setup_central_widget(self):
         """
@@ -1307,9 +1300,6 @@ class MainWindow(QMainWindow):
         ai_analyze_table_action = menu.addAction("AI Analyze Table")
         ai_analyze_table_action.setEnabled(self.editor.hasSelectedText())
         ai_analyze_table_action.triggered.connect(self.ai_analyze_selected_table)
-        
-        grammar_action = menu.addAction("Check Grammar & Style")
-        grammar_action.triggered.connect(self.check_grammar_style)
         
         menu.exec(self.editor.mapToGlobal(position)) # Show menu at global cursor position
 
@@ -2227,40 +2217,6 @@ class MainWindow(QMainWindow):
             lang = "unknown"
         self.language_label.setText(f"Language: {lang}")
 
-    def check_grammar_style(self):
-        text = self.editor.selectedText() or self.editor.toPlainText()
-        language = getattr(self, 'language_override', None) or self.language_label.text().replace('Language: ', '').replace(' (manual)', '')
-        if not text.strip():
-            QMessageBox.information(self, "No Text", "No text selected or document is empty.")
-            return
-        self.statusBar().showMessage("AI is checking grammar and style...", 3000)
-        result = self.ai.grammar_style_check(text, language)
-        corrected, suggestions = self._parse_grammar_result(result)
-        dlg = GrammarBlockDiffDialog(text, corrected, self)
-        if dlg.exec() == QDialog.DialogCode.Accepted:
-            merged = dlg.get_merged_text()
-            if self.editor.selectedText():
-                self.editor.replaceSelectedText(merged)
-            else:
-                self.editor.setPlainText(merged)
-
-    def _parse_grammar_result(self, result: str):
-        # Naive split: look for first bullet list or 'Suggestions:'
-        lines = result.splitlines()
-        corrected = []
-        suggestions = []
-        in_suggestions = False
-        for line in lines:
-            if line.strip().startswith('-') or line.strip().lower().startswith('suggestion'):
-                in_suggestions = True
-            if in_suggestions:
-                suggestions.append(line.strip())
-            else:
-                corrected.append(line)
-        corrected_text = '\n'.join(corrected).strip()
-        suggestions = [s for s in suggestions if s and s != 'Suggestions:']
-        return corrected_text, suggestions
-
     def set_language_override(self, value):
         value = value.strip()
         if value:
@@ -2269,98 +2225,6 @@ class MainWindow(QMainWindow):
         else:
             self.language_override = None
             self.update_language_label()
-
-class GrammarBlockDiffDialog(QDialog):
-    def __init__(self, original, corrected, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("AI Grammar & Style Review (Block Level)")
-        self.resize(900, 600)
-        self.original_blocks = self._split_blocks(original)
-        self.corrected_blocks = self._split_blocks(corrected)
-        self.changes = self._pair_blocks(self.original_blocks, self.corrected_blocks)
-        self.accepted = [False] * len(self.changes)
-        self.index = 0
-        self.layout = QVBoxLayout(self)
-        self.orig_label = QLabel("Original Block:")
-        self.layout.addWidget(self.orig_label)
-        self.orig_box = QTextEdit()
-        self.orig_box.setReadOnly(True)
-        self.layout.addWidget(self.orig_box)
-        self.corr_label = QLabel("Corrected Block:")
-        self.layout.addWidget(self.corr_label)
-        self.corr_box = QTextEdit()
-        self.corr_box.setReadOnly(True)
-        self.layout.addWidget(self.corr_box)
-        btn_layout = QHBoxLayout()
-        self.accept_btn = QPushButton("Accept")
-        self.reject_btn = QPushButton("Reject")
-        self.next_btn = QPushButton("Next")
-        self.prev_btn = QPushButton("Prev")
-        btn_layout.addWidget(self.prev_btn)
-        btn_layout.addWidget(self.accept_btn)
-        btn_layout.addWidget(self.reject_btn)
-        btn_layout.addWidget(self.next_btn)
-        self.layout.addLayout(btn_layout)
-        self.accept_btn.clicked.connect(self.accept_change)
-        self.reject_btn.clicked.connect(self.reject_change)
-        self.next_btn.clicked.connect(self.next_change)
-        self.prev_btn.clicked.connect(self.prev_change)
-        self.update_ui()
-    def _split_blocks(self, text):
-        # Split by double newline or Markdown block (simple version)
-        import re
-        blocks = re.split(r'\n\s*\n', text.strip())
-        return [b.strip() for b in blocks if b.strip()]
-    def _pair_blocks(self, orig_blocks, corr_blocks):
-        # Pair blocks by order, only if different
-        import difflib
-        pairs = []
-        matcher = difflib.SequenceMatcher(None, orig_blocks, corr_blocks)
-        for tag, i1, i2, j1, j2 in matcher.get_opcodes():
-            if tag == 'equal':
-                for k in range(i2 - i1):
-                    pairs.append((orig_blocks[i1 + k], corr_blocks[j1 + k], False))
-            elif tag in ('replace', 'delete', 'insert'):
-                for k in range(max(i2 - i1, j2 - j1)):
-                    o = orig_blocks[i1 + k] if i1 + k < i2 else ''
-                    c = corr_blocks[j1 + k] if j1 + k < j2 else ''
-                    pairs.append((o, c, True))
-        return pairs
-    def update_ui(self):
-        # Skip unchanged blocks
-        while self.index < len(self.changes) and not self.changes[self.index][2]:
-            self.index += 1
-        while self.index >= 0 and self.index < len(self.changes) and not self.changes[self.index][2]:
-            self.index -= 1
-        if self.index < 0 or self.index >= len(self.changes):
-            self.accept()
-            return
-        orig, corr, changed = self.changes[self.index]
-        self.orig_box.setPlainText(orig)
-        self.corr_box.setPlainText(corr)
-        self.orig_label.setText(f"Original Block ({self.index+1}/{len(self.changes)})")
-        self.corr_label.setText(f"Corrected Block ({self.index+1}/{len(self.changes)})")
-    def accept_change(self):
-        self.accepted[self.index] = True
-        self.next_change()
-    def reject_change(self):
-        self.accepted[self.index] = False
-        self.next_change()
-    def next_change(self):
-        self.index += 1
-        self.update_ui()
-    def prev_change(self):
-        if self.index > 0:
-            self.index -= 1
-        self.update_ui()
-    def get_merged_text(self):
-        merged = []
-        for (orig, corr, changed), accept in zip(self.changes, self.accepted):
-            if changed:
-                merged.append(corr if accept else orig)
-            else:
-                merged.append(orig)
-        return '\n\n'.join([b for b in merged if b.strip()])
 
 if __name__ == "__main__":
     # Standard PyQt application setup
