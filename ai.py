@@ -431,3 +431,32 @@ You are an expert technical writing assistant. Summarize the following Markdown 
 ---end document---
 """
         return self._gemini_request(prompt, max_tokens=200)
+
+    def auto_link_document(self, markdown_text: str, note_titles: list[str]) -> str:
+        """
+        Auto-link relevant terms in the markdown to other notes using markdown links.
+        Args:
+            markdown_text (str): The current document's markdown.
+            note_titles (list[str]): List of all note titles (filenames without extension).
+        Returns:
+            str: The markdown with relevant terms auto-linked, or an error message.
+        """
+        titles_str = ', '.join(note_titles)
+        prompt = f"""
+You are an AI knowledge base assistant. The user is editing a markdown note. Here is the document:
+---markdown---
+{markdown_text}
+---end markdown---
+
+Here is a list of all other note titles in the workspace:
+{titles_str}
+
+Your task:
+- Find relevant terms, phrases, or headings in the document that match or closely relate to the note titles.
+- For each, insert a markdown link to the corresponding note (e.g., [Term](NoteTitle.md)).
+- Only link the first occurrence of each term.
+- Do not create links for generic/common words.
+- Do not change the document except for adding these links.
+- Return ONLY the new markdown, no explanation, no extra formatting.
+"""
+        return self._gemini_request(prompt, max_tokens=len(markdown_text) + 200)

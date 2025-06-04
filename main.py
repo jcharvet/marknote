@@ -2418,7 +2418,56 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage("AI summarization complete.", 3000)
 
     def ai_autolink_page(self):
-        QMessageBox.information(self, "AI Auto-Link", "[Stub] Auto-link feature coming soon.")
+        """Auto-link relevant terms in the current document to other notes using AI, with preview and copy option."""
+        if not self.ai:
+            from config_utils import load_gemini_api_key
+            api_key = load_gemini_api_key()
+            if not api_key:
+                QMessageBox.warning(self, "API Key Missing", "Gemini API key not found. Please set it in Preferences.")
+                return
+            self.ai = AIMarkdownAssistant(api_key)
+        full_text = self.editor.toPlainText()
+        if not full_text.strip():
+            QMessageBox.information(self, "AI Auto-Link", "The document is empty.")
+            return
+        # Gather all note titles (filenames without extension, excluding current file)
+        from pathlib import Path
+        base_path = Path(self.default_folder)
+        note_titles = []
+        for md_file in base_path.rglob('*.md'):
+            if str(md_file.resolve()) != str(self.current_file):
+                note_titles.append(md_file.stem)
+        if not note_titles:
+            QMessageBox.information(self, "AI Auto-Link", "No other notes found to link to.")
+            return
+        self.statusBar().showMessage("AI is auto-linking the page...", 3000)
+        try:
+            linked_markdown = self.ai.auto_link_document(full_text, note_titles)
+            if linked_markdown and not linked_markdown.startswith("Error:"):
+                # Preview dialog with accept/cancel/copy
+                msg_box = QMessageBox(self)
+                msg_box.setWindowTitle("Auto-Link Preview")
+                msg_box.setText("AI-suggested auto-linking complete. Review the changes below.\n\n" + linked_markdown[:2000] + ("..." if len(linked_markdown) > 2000 else ""))
+                accept_btn = msg_box.addButton("Accept Changes", QMessageBox.ButtonRole.AcceptRole)
+                copy_btn = msg_box.addButton("Copy to Clipboard", QMessageBox.ButtonRole.ActionRole)
+                cancel_btn = msg_box.addButton(QMessageBox.StandardButton.Cancel)
+                msg_box.exec()
+                if msg_box.clickedButton() == accept_btn:
+                    self.editor.setPlainText(linked_markdown)
+                    self.set_dirty(True)
+                    self.statusBar().showMessage("Auto-linking applied.", 3000)
+                elif msg_box.clickedButton() == copy_btn:
+                    QApplication.clipboard().setText(linked_markdown)
+                    self.statusBar().showMessage("Auto-linked markdown copied to clipboard.", 3000)
+                else:
+                    self.statusBar().showMessage("Auto-linking cancelled.", 3000)
+            else:
+                QMessageBox.critical(self, "AI Auto-Link Failed", f"Could not auto-link. AI response:\n{linked_markdown}")
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            QMessageBox.critical(self, "AI Error", f"An unexpected error occurred: {e}")
+        self.statusBar().showMessage("AI auto-linking complete.", 3000)
 
     def ai_find_related_pages(self):
         QMessageBox.information(self, "AI Related Pages", "[Stub] Related pages feature coming soon.")
