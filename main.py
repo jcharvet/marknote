@@ -2237,7 +2237,7 @@ class MainWindow(QMainWindow):
         result = self.ai.grammar_style_check(text, language)
         corrected, suggestions = self._parse_grammar_result(result)
         dlg = GrammarDiffDialog(text, corrected, self)
-        if dlg.exec() == QDialog.Accepted:
+        if dlg.exec() == QDialog.DialogCode.Accepted:
             merged = dlg.get_merged_text()
             if self.editor.selectedText():
                 self.editor.replaceSelectedText(merged)
