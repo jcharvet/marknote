@@ -31,9 +31,9 @@ import PyQt6.QtWebEngineCore # For version diagnostics
 from PyQt6.QtCore import Qt, QTimer, QEventLoop, QEvent, QPoint, QByteArray, QMimeData, QUrl, pyqtSignal, pyqtSlot, QObject # Added QByteArray, QMimeData, QUrl, pyqtSignal, pyqtSlot, QObject
 from PyQt6.QtGui import QAction, QKeySequence, QFont, QColor, QTextCharFormat, QTextCursor, QDesktopServices, QIcon, QPalette, QKeyEvent
 from PyQt6.QtWidgets import (
-    QApplication, QFileDialog, QHBoxLayout, QInputDialog, QLineEdit,
+    QApplication, QFileDialog, QHBoxLayout, QVBoxLayout, QInputDialog, QLineEdit,
     QMainWindow, QMenu, QMessageBox, QPushButton, QStackedWidget, QTextEdit,
-    QToolBar, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget, QDialog, QLabel, QDialogButtonBox, QListWidget, QComboBox
+    QToolBar, QTreeWidget, QTreeWidgetItem, QWidget, QDialog, QLabel, QDialogButtonBox, QListWidget, QComboBox, QTextBrowser
 )
 from PyQt6.Qsci import QsciLexerMarkdown, QsciScintilla
 from PyQt6.QtWebEngineWidgets import QWebEngineView # QWebEngineView already imported
@@ -48,7 +48,6 @@ import markdown
 from markdown.extensions.toc import TocExtension
 from toc_utils import generate_anchor
 import requests
-from ai_prompt_dialog import AIPromptDialog
 from toc_utils import extract_headings, format_toc
 
 DEFAULT_VIEW_MODE_KEY = "default_view_mode"
@@ -811,7 +810,7 @@ class MainWindow(QMainWindow):
         # --- AI Actions (flat, grouped) ---
         ai_command_action = QAction("AI Command", self)
         ai_command_action.setShortcut(QKeySequence("Ctrl+Shift+Space"))
-        ai_command_action.triggered.connect(lambda: self.ai_prompt_action('command'))
+        ai_command_action.triggered.connect(self.show_command_bar)
         self.tools_menu.addAction(ai_command_action)
 
         ai_create_table_action = QAction("AI Create Table...", self)
@@ -925,7 +924,7 @@ class MainWindow(QMainWindow):
 
         ai_command_action = QAction("AI Command", self) # More descriptive
         ai_command_action.setShortcut(QKeySequence("Ctrl+Shift+Space"))
-        ai_command_action.triggered.connect(lambda: self.ai_prompt_action('command'))
+        ai_command_action.triggered.connect(self.show_command_bar)
         other_menu.addAction(ai_command_action)
         
         # --- Help Menu ---
@@ -941,7 +940,7 @@ class MainWindow(QMainWindow):
         tools_menu.addAction(link_action)
         ai_command_action = QAction("AI Command", self)
         ai_command_action.setShortcut(QKeySequence("Ctrl+Shift+Space"))
-        ai_command_action.triggered.connect(lambda: self.ai_prompt_action('command'))
+        ai_command_action.triggered.connect(self.show_command_bar)
         tools_menu.addAction(ai_command_action)
         insert_image_action = QAction("Insert Image...", self)
         insert_image_action.triggered.connect(self.insert_image)
@@ -970,12 +969,78 @@ class MainWindow(QMainWindow):
         main_layout.setSpacing(0)
         main_layout.addWidget(self.library_panel)
         main_layout.addWidget(self.stack, 1)
+
+        # --- AI Results Panel (right column) ---
+        self.ai_results_panel = QWidget()
+        self.ai_results_panel.setMinimumWidth(320)
+        self.ai_results_panel.setMaximumWidth(420)
+        self.ai_results_panel.setStyleSheet("background: #23252b; color: #d7dae0; border-left: 1px solid #4b5263;")
+        ai_results_layout = QVBoxLayout()
+        ai_results_layout.setContentsMargins(8, 8, 8, 8)
+        ai_results_layout.setSpacing(6)
+        self.ai_results_panel.setLayout(ai_results_layout)
+
+        # AI Action Selector (QComboBox) at the top
+        self.ai_action_selector = QComboBox()
+        self.ai_action_selector.addItems([
+            "General Command",
+            "Summarize Page",
+            "Expand Selection",
+            "Refine Selection",
+            "Analyze Document",
+            "Analyze Selection/Table",
+            "Create Table",
+            "Create Mermaid Diagram",
+            "Auto-Link Page",
+            "Find Related Pages",
+            "Semantic Search"
+        ])
+        # Handler will be connected later
+        ai_results_layout.insertWidget(0, self.ai_action_selector)
+
+        # Close button
+        close_row = QHBoxLayout()
+        close_row.setContentsMargins(0, 0, 0, 0)
+        close_row.setSpacing(0)
+        close_btn = QPushButton("×")
+        close_btn.setFixedSize(24, 24)
+        close_btn.setStyleSheet("font-size: 18px; color: #d7dae0; background: transparent; border: none;")
+        close_btn.clicked.connect(self.hide_ai_panel)
+        close_row.addStretch(1)
+        close_row.addWidget(close_btn)
+        ai_results_layout.addLayout(close_row)
+
+        # AI Command Bar (moved from bottom)
+        self.command_bar = QTextEdit(self)
+        self.command_bar.setPlaceholderText("AI Command (Ctrl+Enter to send)")
+        self.command_bar.setFixedHeight(60)
+        self.send_button = QPushButton("Send", self)
+        self.send_button.clicked.connect(self.execute_command)
+        command_bar_row = QHBoxLayout()
+        command_bar_row.addWidget(self.command_bar)
+        command_bar_row.addWidget(self.send_button)
+        ai_results_layout.addLayout(command_bar_row)
+
+        # AI Results Display (QTextBrowser)
+        self.ai_results_display = QTextBrowser(self)
+        self.ai_results_display.setPlaceholderText("AI results and previews will appear here.")
+        self.ai_results_display.setOpenExternalLinks(False)
+        self.ai_results_display.anchorClicked.connect(self._handle_ai_result_link)
+        ai_results_layout.addWidget(self.ai_results_display)
+
+        # Dynamic action buttons area
+        self.ai_action_buttons_widget = QWidget()
+        self.ai_action_buttons_layout = QHBoxLayout()
+        self.ai_action_buttons_layout.setContentsMargins(0,0,0,0)
+        self.ai_action_buttons_widget.setLayout(self.ai_action_buttons_layout)
+        ai_results_layout.addWidget(self.ai_action_buttons_widget)
+
+        self.ai_results_panel.hide()  # Hide by default
+        main_layout.addWidget(self.ai_results_panel)
+
         main_container = QWidget()
         main_container.setLayout(main_layout)
         central_layout.addWidget(main_container)
-
-        # The AI command bar is added below the main area
-        central_layout.addWidget(self.command_bar_widget)
 
         # Footer toolbar for language display
         self.footer_toolbar = QToolBar("Footer Toolbar")
@@ -995,6 +1060,13 @@ class MainWindow(QMainWindow):
         self.footer_toolbar.addWidget(self.language_override_combo)
         central_layout.addWidget(self.footer_toolbar)
         self.update_language_label()
+
+    def show_ai_panel(self):
+        self.ai_results_panel.show()
+        self.command_bar.setFocus()
+
+    def hide_ai_panel(self):
+        self.ai_results_panel.hide()
 
     def _init_library_panel(self):
         """Initializes the document library panel on the left side of the window."""
@@ -1066,8 +1138,8 @@ class MainWindow(QMainWindow):
         self.command_shortcut.triggered.connect(self.show_command_bar)
         self.addAction(self.command_shortcut) # Add action to the main window
 
-        # Connect key press event for Ctrl+Enter functionality
-        self.command_bar.keyPressEvent = self.command_bar_key_press_event
+        # Install event filter for Ctrl+Enter
+        self.command_bar.installEventFilter(self)
 
     def _get_unique_filename(self, directory: Path, original_filename: str) -> Path:
         """
@@ -1586,11 +1658,147 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(f"Error during {action_type} creation.", 3000)
 
     def ai_create_table(self):
-        self.ai_prompt_action('table')
+        self.show_ai_panel()
+        self.ai_action_selector.setCurrentText("Create Table")
+        self.command_bar.setFocus()
     def ai_create_mermaid_diagram(self):
-        self.ai_prompt_action('mermaid')
+        self.show_ai_panel()
+        self.ai_action_selector.setCurrentText("Create Mermaid Diagram")
+        self.command_bar.setFocus()
     def execute_command(self):
-        self.ai_prompt_action('command')
+        if not self._ensure_ai_assistant():
+            return
+
+        action_type = self.ai_action_selector.currentText()
+        prompt = self.command_bar.toPlainText().strip()
+        selected_text = self.editor.selectedText()
+        full_text = self.editor.toPlainText()
+
+        self.ai_results_display.setText(f"<i>Processing '{action_type}'...</i>")
+        QApplication.processEvents()
+
+        response_text = ""
+        try:
+            if action_type == "General Command":
+                if not prompt:
+                    self.ai_results_display.setText("Please enter a command.")
+                    return
+                response_text = self.ai.process_natural_command(prompt, selected_text=selected_text or None)
+            elif action_type == "Summarize Page":
+                if not full_text.strip():
+                    self.ai_results_display.setText("Document is empty. Nothing to summarize.")
+                    return
+                response_text = self.ai.summarize_document(full_text)
+            elif action_type == "Create Table":
+                if not prompt:
+                    self.ai_results_display.setText("Please describe the table you want to create.")
+                    return
+                response_text = self.ai.create_table(prompt)
+            elif action_type == "Auto-Link Page":
+                full_text = self.editor.toPlainText()
+                if not full_text.strip():
+                    self.ai_results_display.setText("Document is empty. Nothing to auto-link.")
+                    return
+                # Gather all note titles (excluding current file)
+                from pathlib import Path
+                base_path = Path(self.default_folder)
+                note_titles = []
+                for md_file in base_path.rglob('*.md'):
+                    if str(md_file.resolve()) != str(self.current_file):
+                        note_titles.append(md_file.stem)
+                if not note_titles:
+                    self.ai_results_display.setText("No other notes found to link to.")
+                    return
+                response_text = self.ai.auto_link_document(full_text, note_titles)
+            elif action_type == "Find Related Pages":
+                full_text = self.editor.toPlainText()
+                if not full_text.strip():
+                    self.ai_results_display.setText("No content in the current document.")
+                    return
+                from pathlib import Path
+                base_path = Path(self.default_folder)
+                all_notes = {}
+                for md_file in base_path.rglob('*.md'):
+                    if str(md_file.resolve()) != str(self.current_file):
+                        try:
+                            with open(md_file, 'r', encoding='utf-8') as f:
+                                all_notes[md_file.stem] = f.read()
+                        except Exception:
+                            continue
+                if not all_notes:
+                    self.ai_results_display.setText("No other notes found.")
+                    return
+                results = self.ai.find_related_pages(full_text, all_notes)
+                if not results or results[0][0] == "[Error]":
+                    self.ai_results_display.setText("Could not find related pages.")
+                    return
+                msg = "<b>Top Related Pages:</b><br><ul>"
+                for title, sim in results:
+                    msg += f'<li><a href="wikilink://{title.replace(" ", "%20")}">{title}</a> (similarity: {sim:.2f})</li>'
+                msg += "</ul>"
+                self.ai_results_display.setText(msg)
+                self._clear_ai_action_buttons()
+                return
+            elif action_type == "Semantic Search":
+                query = prompt
+                if not query:
+                    self.ai_results_display.setText("Please enter a search query.")
+                    return
+                from pathlib import Path
+                base_path = Path(self.default_folder)
+                all_notes = {}
+                for md_file in base_path.rglob('*.md'):
+                    try:
+                        with open(md_file, 'r', encoding='utf-8') as f:
+                            all_notes[md_file.stem] = f.read()
+                    except Exception:
+                        continue
+                if not all_notes:
+                    self.ai_results_display.setText("No notes found.")
+                    return
+                try:
+                    query_emb = self.ai.get_embedding(query)
+                    results = []
+                    for title, text in all_notes.items():
+                        try:
+                            emb = self.ai.get_embedding(text)
+                            sim = self.ai.cosine_similarity(query_emb, emb)
+                            results.append((title, sim))
+                        except Exception:
+                            continue
+                    results.sort(key=lambda x: x[1], reverse=True)
+                    top_results = results[:5]
+                    msg = "<b>Top Semantic Search Results:</b><br><ul>"
+                    for title, sim in top_results:
+                        msg += f'<li><a href="wikilink://{title.replace(" ", "%20")}">{title}</a> (similarity: {sim:.2f})</li>'
+                    msg += "</ul>"
+                    self.ai_results_display.setText(msg)
+                    self._clear_ai_action_buttons()
+                    return
+                except Exception as e:
+                    import traceback
+                    traceback.print_exc()
+                    self.ai_results_display.setText(f"<b>AI Error:</b> {e}")
+                    self._clear_ai_action_buttons()
+                    return
+            elif action_type == "Create Mermaid Diagram":
+                if not prompt:
+                    self.ai_results_display.setText("Please describe the diagram you want to create.")
+                    return
+                response_text = self.ai.create_mermaid_diagram(prompt)
+            # TODO: Add more actions here
+
+            if not response_text:
+                self.ai_results_display.setMarkdown(f"<b>Error:</b><br><pre>No response from AI.</pre>")
+                self._clear_ai_action_buttons()
+            else:
+                self._handle_ai_response(response_text, action_type, original_prompt=prompt, context_text=selected_text)
+                self.command_bar.clear()
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            self.ai_results_display.setMarkdown(f"<b>An unexpected error occurred:</b><br><pre>{e}</pre>")
+            self._clear_ai_action_buttons()
 
     def ai_analyze_selected_table(self):
         """Analyzes the selected Markdown table using AI and displays insights."""
@@ -1682,11 +1890,17 @@ class MainWindow(QMainWindow):
                 QMessageBox.critical(self, "Error", f"Failed to delete {type_name}: {e}")
 
     def expand_selected_text(self):
-        """Expands the selected text using the AI assistant."""
-        selected_text = self.editor.selectedText()
-        if selected_text:
-            expanded_content = self.ai.expand_content(selected_text)
-            self.editor.replaceSelectedText(expanded_content) # Replace selection with AI output
+        if not self.editor.hasSelectedText():
+            self.statusBar().showMessage("No text selected to expand.", 3000)
+            self.show_ai_panel()
+            self.ai_action_selector.setCurrentText("Expand Selection")
+            self.ai_results_display.setText("Select text in the editor, then click 'Send'.")
+            self._clear_ai_action_buttons()
+            return
+        self.show_ai_panel()
+        self.ai_action_selector.setCurrentText("Expand Selection")
+        self.ai_results_display.setText(f"Selected text:\n---\n{self.editor.selectedText()}\n---\nClick 'Send' to expand.")
+        self._clear_ai_action_buttons()
 
     def refine_selected_text(self):
         """Refines the selected text for clarity and conciseness using the AI assistant."""
@@ -1705,12 +1919,9 @@ class MainWindow(QMainWindow):
         QMessageBox.information(self, "AI Document Analysis", analysis_results)
 
     def show_command_bar(self):
-        """Shows the AI command bar and sets focus to it."""
-        if self.command_bar_widget.isHidden():
-            self.command_bar_widget.show()
-            self.command_bar.setFocus() # Set focus to the input field
-        else:
-            self.command_bar_widget.hide()
+        self.show_ai_panel()
+        self.ai_action_selector.setCurrentText("General Command")
+        self.command_bar.setFocus()
 
 
     def update_recent_files_menu(self):
@@ -2383,98 +2594,86 @@ class MainWindow(QMainWindow):
 
     # --- AI Feature Placeholders ---
     def ai_summarize_page(self):
-        """Summarize the current markdown document using AI and show the result in a dialog with copy option."""
-        if not self.ai:
-            from config_utils import load_gemini_api_key
-            api_key = load_gemini_api_key()
-            if not api_key:
-                QMessageBox.warning(self, "API Key Missing", "Gemini API key not found. Please set it in Preferences.")
-                return
-            self.ai = AIMarkdownAssistant(api_key)
-        full_text = self.editor.toPlainText()
-        if not full_text.strip():
-            QMessageBox.information(self, "AI Summarize", "The document is empty.")
-            return
-        self.statusBar().showMessage("AI is summarizing the page...", 3000)
-        try:
-            summary = self.ai.summarize_document(full_text)
-            if summary and not summary.startswith("Error:"):
-                # Custom dialog with copy button
-                msg_box = QMessageBox(self)
-                msg_box.setWindowTitle("Page Summary")
-                msg_box.setText(summary)
-                copy_btn = msg_box.addButton("Copy to Clipboard", QMessageBox.ButtonRole.ActionRole)
-                msg_box.addButton(QMessageBox.StandardButton.Ok)
-                msg_box.exec()
-                if msg_box.clickedButton() == copy_btn:
-                    QApplication.clipboard().setText(summary)
-                    self.statusBar().showMessage("Summary copied to clipboard.", 3000)
-            else:
-                QMessageBox.critical(self, "AI Summarize Failed", f"Could not generate summary. AI response:\n{summary}")
-        except Exception as e:
-            import traceback
-            traceback.print_exc()
-            QMessageBox.critical(self, "AI Error", f"An unexpected error occurred: {e}")
-        self.statusBar().showMessage("AI summarization complete.", 3000)
+        self.show_ai_panel()
+        self.ai_action_selector.setCurrentText("Summarize Page")
+        self.command_bar.setEnabled(False)
+        self.ai_results_display.setText("Click 'Send' to summarize the current page.")
+        self._clear_ai_action_buttons()
 
     def ai_autolink_page(self):
-        """Auto-link relevant terms in the current document to other notes using AI, with preview and copy option."""
-        if not self.ai:
-            from config_utils import load_gemini_api_key
-            api_key = load_gemini_api_key()
-            if not api_key:
-                QMessageBox.warning(self, "API Key Missing", "Gemini API key not found. Please set it in Preferences.")
-                return
-            self.ai = AIMarkdownAssistant(api_key)
-        full_text = self.editor.toPlainText()
-        if not full_text.strip():
-            QMessageBox.information(self, "AI Auto-Link", "The document is empty.")
-            return
-        # Gather all note titles (filenames without extension, excluding current file)
-        from pathlib import Path
-        base_path = Path(self.default_folder)
-        note_titles = []
-        for md_file in base_path.rglob('*.md'):
-            if str(md_file.resolve()) != str(self.current_file):
-                note_titles.append(md_file.stem)
-        print(f"[DEBUG] Note titles for auto-linking: {note_titles}")
-        if not note_titles:
-            QMessageBox.information(self, "AI Auto-Link", "No other notes found to link to.")
-            return
-        self.statusBar().showMessage("AI is auto-linking the page...", 3000)
-        try:
-            linked_markdown = self.ai.auto_link_document(full_text, note_titles)
-            if linked_markdown and not linked_markdown.startswith("Error:"):
-                # Preview dialog with accept/cancel/copy
-                msg_box = QMessageBox(self)
-                msg_box.setWindowTitle("Auto-Link Preview")
-                msg_box.setText("AI-suggested auto-linking complete. Review the changes below.\n\n" + linked_markdown[:2000] + ("..." if len(linked_markdown) > 2000 else ""))
-                accept_btn = msg_box.addButton("Accept Changes", QMessageBox.ButtonRole.AcceptRole)
-                copy_btn = msg_box.addButton("Copy to Clipboard", QMessageBox.ButtonRole.ActionRole)
-                cancel_btn = msg_box.addButton(QMessageBox.StandardButton.Cancel)
-                msg_box.exec()
-                if msg_box.clickedButton() == accept_btn:
-                    self.editor.setPlainText(linked_markdown)
-                    self.set_dirty(True)
-                    self.statusBar().showMessage("Auto-linking applied.", 3000)
-                elif msg_box.clickedButton() == copy_btn:
-                    QApplication.clipboard().setText(linked_markdown)
-                    self.statusBar().showMessage("Auto-linked markdown copied to clipboard.", 3000)
-                else:
-                    self.statusBar().showMessage("Auto-linking cancelled.", 3000)
-            else:
-                QMessageBox.critical(self, "AI Auto-Link Failed", f"Could not auto-link. AI response:\n{linked_markdown}")
-        except Exception as e:
-            import traceback
-            traceback.print_exc()
-            QMessageBox.critical(self, "AI Error", f"An unexpected error occurred: {e}")
-        self.statusBar().showMessage("AI auto-linking complete.", 3000)
+        self.show_ai_panel()
+        self.ai_action_selector.setCurrentText("Auto-Link Page")
+        self.command_bar.setEnabled(False)
+        self.ai_results_display.setText("Click 'Send' to auto-link the current page.")
+        self._clear_ai_action_buttons()
 
     def ai_find_related_pages(self):
-        QMessageBox.information(self, "AI Related Pages", "[Stub] Related pages feature coming soon.")
+        self.show_ai_panel()
+        self.ai_action_selector.setCurrentText("Find Related Pages")
+        self.command_bar.setEnabled(False)
+        self.ai_results_display.setText("Click 'Send' to find related pages.")
+        self._clear_ai_action_buttons()
 
     def ai_semantic_search(self):
-        QMessageBox.information(self, "AI Semantic Search", "[Stub] Semantic search feature coming soon.")
+        self.show_ai_panel()
+        self.ai_action_selector.setCurrentText("Semantic Search")
+        self.command_bar.setEnabled(True)
+        self.command_bar.setPlaceholderText("Enter your search query and click 'Send'.")
+        self.ai_results_display.setText("Semantic search: enter your query and click 'Send'.")
+        self._clear_ai_action_buttons()
+
+    def _handle_ai_result_link(self, link):
+        # Handles clicks on AI result links (wikilink://...)
+        if link.startswith("wikilink://"):
+            page = link[len("wikilink://"):].replace("%20", " ")
+            self.handle_wiki_link(page)
+
+    def _on_ai_action_selected(self, action_text: str):
+        self.command_bar.clear()
+        self.ai_results_display.clear()
+        self._clear_ai_action_buttons()
+        # Placeholder: update command_bar placeholder and enable/disable as needed
+        # Full logic will be added in next steps
+        self.command_bar.setPlaceholderText(f"Selected: {action_text}")
+        self.command_bar.setEnabled(True)
+
+    def _clear_ai_action_buttons(self):
+        while self.ai_action_buttons_layout.count():
+            child = self.ai_action_buttons_layout.takeAt(0)
+            if child.widget():
+                child.widget().deleteLater()
+
+    def _add_ai_action_button(self, text: str, callback):
+        btn = QPushButton(text)
+        btn.clicked.connect(callback)
+        self.ai_action_buttons_layout.addWidget(btn)
+
+    def _ensure_ai_assistant(self) -> bool:
+        if self.ai:
+            return True
+        try:
+            self.ai = AIMarkdownAssistant() # AIMarkdownAssistant handles key loading
+            return True
+        except ValueError as e:
+            self.ai_results_display.setMarkdown(f"<b>AI Error:</b> Gemini API key not found. Please set it in Preferences via File > Preferences.<br><pre>{e}</pre>")
+            self._clear_ai_action_buttons()
+            return False
+
+    def _handle_ai_response(self, response_text: str, action_type: str, original_prompt: str = None, context_text: str = None):
+        self.ai_results_display.setMarkdown(response_text)
+        self._clear_ai_action_buttons()
+        self._add_ai_action_button("Copy Result", lambda: QApplication.clipboard().setText(response_text))
+
+    def eventFilter(self, obj, event):
+        if obj is self.command_bar and event.type() == QEvent.Type.KeyPress:
+            from PyQt6.QtGui import QKeyEvent
+            key_event = event
+            if isinstance(key_event, QKeyEvent):
+                if key_event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter) and \
+                   key_event.modifiers() == Qt.KeyboardModifier.ControlModifier:
+                    self.execute_command()
+                    return True
+        return super().eventFilter(obj, event)
 
 if __name__ == "__main__":
     # Standard PyQt application setup
