@@ -12,6 +12,7 @@ or as an environment variable `GEMINI_API_KEY`.
 import os
 import requests # For making HTTP requests to the Gemini API
 from typing import Optional # For type hinting
+import numpy as np
 
 from config_utils import load_app_config, CONFIG_KEY_GEMINI_API_KEY
 
@@ -460,3 +461,52 @@ Your task:
 - Example: If the note titles are 'Home' and 'Page Name', and the document mentions these or related concepts, link them as [[Home]], [[Page Name]] at their first occurrence.
 """
         return self._gemini_request(prompt, max_tokens=len(markdown_text) + 200)
+
+    def get_embedding(self, text: str) -> list[float]:
+        """
+        Get an embedding vector for the given text using Gemini API.
+        Returns a list of floats (the embedding) or raises Exception on failure.
+        """
+        # Gemini embedding endpoint (speculative, adjust as needed)
+        GEMINI_EMBED_URL = "https://generativelanguage.googleapis.com/v1beta/models/embedding-001:embedContent"
+        headers = {"Content-Type": "application/json"}
+        params = {"key": self.api_key}
+        data = {"model": "models/embedding-001", "content": {"parts": [{"text": text}]}}
+        try:
+            resp = requests.post(GEMINI_EMBED_URL, headers=headers, params=params, json=data, timeout=20)
+            resp.raise_for_status()
+            result = resp.json()
+            # Gemini returns embedding in result["embedding"]["values"]
+            return result["embedding"]["values"]
+        except Exception as e:
+            raise RuntimeError(f"Embedding request failed: {e}")
+
+    def cosine_similarity(self, v1: list[float], v2: list[float]) -> float:
+        """
+        Compute cosine similarity between two vectors.
+        """
+        a = np.array(v1)
+        b = np.array(v2)
+        return float(np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b)))
+
+    def find_related_pages(self, current_text: str, all_notes: dict) -> list:
+        """
+        Given the current note text and a dict of {title: text} for all notes,
+        return a list of (title, similarity) tuples for the most related pages.
+        """
+        try:
+            current_emb = self.get_embedding(current_text)
+            results = []
+            for title, text in all_notes.items():
+                try:
+                    emb = self.get_embedding(text)
+                    sim = self.cosine_similarity(current_emb, emb)
+                    results.append((title, sim))
+                except Exception:
+                    continue
+            # Sort by similarity, descending, exclude self (sim==1.0)
+            results = [r for r in results if r[1] < 0.999]
+            results.sort(key=lambda x: x[1], reverse=True)
+            return results[:5]  # Top 5 related
+        except Exception as e:
+            return [("[Error]", 0.0)]

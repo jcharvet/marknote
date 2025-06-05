@@ -2471,10 +2471,109 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage("AI auto-linking complete.", 3000)
 
     def ai_find_related_pages(self):
-        QMessageBox.information(self, "AI Related Pages", "[Stub] Related pages feature coming soon.")
+        """Find and display the most related pages to the current document using AI embeddings."""
+        if not self.ai:
+            from config_utils import load_gemini_api_key
+            api_key = load_gemini_api_key()
+            if not api_key:
+                QMessageBox.warning(self, "API Key Missing", "Gemini API key not found. Please set it in Preferences.")
+                return
+            self.ai = AIMarkdownAssistant(api_key)
+        full_text = self.editor.toPlainText()
+        if not full_text.strip():
+            QMessageBox.information(self, "AI Related Pages", "The document is empty.")
+            return
+        # Gather all note titles and contents (excluding current file)
+        from pathlib import Path
+        base_path = Path(self.default_folder)
+        all_notes = {}
+        for md_file in base_path.rglob('*.md'):
+            if str(md_file.resolve()) != str(self.current_file):
+                try:
+                    with open(md_file, 'r', encoding='utf-8') as f:
+                        all_notes[md_file.stem] = f.read()
+                except Exception:
+                    continue
+        if not all_notes:
+            QMessageBox.information(self, "AI Related Pages", "No other notes found.")
+            return
+        self.statusBar().showMessage("AI is finding related pages...", 3000)
+        try:
+            results = self.ai.find_related_pages(full_text, all_notes)
+            if not results or results[0][0] == "[Error]":
+                QMessageBox.critical(self, "AI Related Pages Failed", "Could not find related pages.")
+                return
+            # Show results in a dialog with clickable links
+            msg = "<b>Top Related Pages:</b><br><ul>"
+            for title, sim in results:
+                msg += f'<li><a href="wikilink://{title.replace(" ", "%20")}">{title}</a> (similarity: {sim:.2f})</li>'
+            msg += "</ul>"
+            dlg = QMessageBox(self)
+            dlg.setWindowTitle("Related Pages")
+            dlg.setTextFormat(Qt.TextFormat.RichText)
+            dlg.setText(msg)
+            dlg.addButton(QMessageBox.StandardButton.Ok)
+            dlg.exec()
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            QMessageBox.critical(self, "AI Error", f"An unexpected error occurred: {e}")
+        self.statusBar().showMessage("AI related pages complete.", 3000)
 
     def ai_semantic_search(self):
-        QMessageBox.information(self, "AI Semantic Search", "[Stub] Semantic search feature coming soon.")
+        """Prompt for a search query, find the most semantically relevant notes, and show them."""
+        if not self.ai:
+            from config_utils import load_gemini_api_key
+            api_key = load_gemini_api_key()
+            if not api_key:
+                QMessageBox.warning(self, "API Key Missing", "Gemini API key not found. Please set it in Preferences.")
+                return
+            self.ai = AIMarkdownAssistant(api_key)
+        from PyQt6.QtWidgets import QInputDialog
+        query, ok = QInputDialog.getText(self, "Semantic Search", "Enter your search query:")
+        if not ok or not query.strip():
+            return
+        # Gather all note titles and contents
+        from pathlib import Path
+        base_path = Path(self.default_folder)
+        all_notes = {}
+        for md_file in base_path.rglob('*.md'):
+            try:
+                with open(md_file, 'r', encoding='utf-8') as f:
+                    all_notes[md_file.stem] = f.read()
+            except Exception:
+                continue
+        if not all_notes:
+            QMessageBox.information(self, "Semantic Search", "No notes found.")
+            return
+        self.statusBar().showMessage("AI is searching semantically...", 3000)
+        try:
+            query_emb = self.ai.get_embedding(query)
+            results = []
+            for title, text in all_notes.items():
+                try:
+                    emb = self.ai.get_embedding(text)
+                    sim = self.ai.cosine_similarity(query_emb, emb)
+                    results.append((title, sim))
+                except Exception:
+                    continue
+            results.sort(key=lambda x: x[1], reverse=True)
+            top_results = results[:5]
+            msg = "<b>Top Semantic Search Results:</b><br><ul>"
+            for title, sim in top_results:
+                msg += f'<li><a href="wikilink://{title.replace(" ", "%20")}">{title}</a> (similarity: {sim:.2f})</li>'
+            msg += "</ul>"
+            dlg = QMessageBox(self)
+            dlg.setWindowTitle("Semantic Search Results")
+            dlg.setTextFormat(Qt.TextFormat.RichText)
+            dlg.setText(msg)
+            dlg.addButton(QMessageBox.StandardButton.Ok)
+            dlg.exec()
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            QMessageBox.critical(self, "AI Error", f"An unexpected error occurred: {e}")
+        self.statusBar().showMessage("AI semantic search complete.", 3000)
 
 if __name__ == "__main__":
     # Standard PyQt application setup
