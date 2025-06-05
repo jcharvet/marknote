@@ -2437,6 +2437,7 @@ class MainWindow(QMainWindow):
         for md_file in base_path.rglob('*.md'):
             if str(md_file.resolve()) != str(self.current_file):
                 note_titles.append(md_file.stem)
+        print(f"[DEBUG] Note titles for auto-linking: {note_titles}")
         if not note_titles:
             QMessageBox.information(self, "AI Auto-Link", "No other notes found to link to.")
             return

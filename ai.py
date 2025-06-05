@@ -452,13 +452,11 @@ Here is a list of all other note titles in the workspace:
 {titles_str}
 
 Your task:
-- For each note title, find the first occurrence of that title, a close match, synonym, or related concept in the document.
-- Insert a markdown link to the corresponding note (e.g., [Term](NoteTitle.md)) at that spot.
-- Prefer over-linking to under-linking, but do not link generic/common words.
-- If you can't find an exact match, link the closest relevant phrase or heading.
-- Add at least 3-5 links if possible.
+- For every note title, you MUST add a markdown link at the first relevant spot in the document, even if it's only a partial match or a related concept.
+- Use the format [Term](NoteTitle.md).
+- If you do not add at least 3 links, you have failed the task.
 - Do not change the document except for adding these links.
 - Return ONLY the new markdown, no explanation, no extra formatting.
-- Example: If the note titles are 'Croissant & Coffee', 'Tartine', and 'To Do List', and the document mentions these or related concepts, link them as [Croissant & Coffee](Croissant & Coffee.md), [Tartine](Tartine.md), [To Do List](To Do List.md) at their first occurrence.
+- Example: If the note titles are 'Home' and 'Page Name', and the document mentions these or related concepts, link them as [Home](Home.md), [Page Name](Page Name.md) at their first occurrence.
 """
         return self._gemini_request(prompt, max_tokens=len(markdown_text) + 200)
