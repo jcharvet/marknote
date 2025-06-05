@@ -31,9 +31,9 @@ import PyQt6.QtWebEngineCore # For version diagnostics
 from PyQt6.QtCore import Qt, QTimer, QEventLoop, QEvent, QPoint, QByteArray, QMimeData, QUrl, pyqtSignal, pyqtSlot, QObject # Added QByteArray, QMimeData, QUrl, pyqtSignal, pyqtSlot, QObject
 from PyQt6.QtGui import QAction, QKeySequence, QFont, QColor, QTextCharFormat, QTextCursor, QDesktopServices, QIcon, QPalette, QKeyEvent
 from PyQt6.QtWidgets import (
-    QApplication, QFileDialog, QHBoxLayout, QInputDialog, QLineEdit,
+    QApplication, QFileDialog, QHBoxLayout, QVBoxLayout, QInputDialog, QLineEdit,
     QMainWindow, QMenu, QMessageBox, QPushButton, QStackedWidget, QTextEdit,
-    QToolBar, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget, QDialog, QLabel, QDialogButtonBox, QListWidget, QComboBox
+    QToolBar, QTreeWidget, QTreeWidgetItem, QWidget, QDialog, QLabel, QDialogButtonBox, QListWidget, QComboBox
 )
 from PyQt6.Qsci import QsciLexerMarkdown, QsciScintilla
 from PyQt6.QtWebEngineWidgets import QWebEngineView # QWebEngineView already imported
@@ -970,12 +970,55 @@ class MainWindow(QMainWindow):
         main_layout.setSpacing(0)
         main_layout.addWidget(self.library_panel)
         main_layout.addWidget(self.stack, 1)
+
+        # --- AI Results Panel (right column) ---
+        self.ai_results_panel = QWidget()
+        self.ai_results_panel.setMinimumWidth(320)
+        self.ai_results_panel.setMaximumWidth(420)
+        self.ai_results_panel.setStyleSheet("background: #23252b; color: #d7dae0; border-left: 1px solid #4b5263;")
+        ai_results_layout = QVBoxLayout()
+        ai_results_layout.setContentsMargins(8, 8, 8, 8)
+        ai_results_layout.setSpacing(6)
+        self.ai_results_panel.setLayout(ai_results_layout)
+
+        # Close button
+        from PyQt6.QtWidgets import QHBoxLayout, QPushButton
+        close_row = QHBoxLayout()
+        close_row.setContentsMargins(0, 0, 0, 0)
+        close_row.setSpacing(0)
+        close_btn = QPushButton("×")
+        close_btn.setFixedSize(24, 24)
+        close_btn.setStyleSheet("font-size: 18px; color: #d7dae0; background: transparent; border: none;")
+        close_btn.clicked.connect(self.hide_ai_panel)
+        close_row.addStretch(1)
+        close_row.addWidget(close_btn)
+        ai_results_layout.addLayout(close_row)
+
+        # AI Command Bar (moved from bottom)
+        self.command_bar = QTextEdit(self)
+        self.command_bar.setPlaceholderText("AI Command (Ctrl+Enter to send)")
+        self.command_bar.setFixedHeight(60)
+        self.send_button = QPushButton("Send", self)
+        self.send_button.clicked.connect(self.execute_command)
+        command_bar_row = QHBoxLayout()
+        command_bar_row.addWidget(self.command_bar)
+        command_bar_row.addWidget(self.send_button)
+        ai_results_layout.addLayout(command_bar_row)
+
+        # AI Results Label
+        self.ai_results_label = QLabel("AI Results will appear here.")
+        self.ai_results_label.setWordWrap(True)
+        self.ai_results_label.setTextFormat(Qt.TextFormat.RichText)
+        self.ai_results_label.setOpenExternalLinks(False)
+        self.ai_results_label.linkActivated.connect(self._handle_ai_result_link)
+        ai_results_layout.addWidget(self.ai_results_label)
+
+        self.ai_results_panel.hide()  # Hide by default
+        main_layout.addWidget(self.ai_results_panel)
+
         main_container = QWidget()
         main_container.setLayout(main_layout)
         central_layout.addWidget(main_container)
-
-        # The AI command bar is added below the main area
-        central_layout.addWidget(self.command_bar_widget)
 
         # Footer toolbar for language display
         self.footer_toolbar = QToolBar("Footer Toolbar")
@@ -995,6 +1038,13 @@ class MainWindow(QMainWindow):
         self.footer_toolbar.addWidget(self.language_override_combo)
         central_layout.addWidget(self.footer_toolbar)
         self.update_language_label()
+
+    def show_ai_panel(self):
+        self.ai_results_panel.show()
+        self.command_bar.setFocus()
+
+    def hide_ai_panel(self):
+        self.ai_results_panel.hide()
 
     def _init_library_panel(self):
         """Initializes the document library panel on the left side of the window."""
@@ -1705,12 +1755,8 @@ class MainWindow(QMainWindow):
         QMessageBox.information(self, "AI Document Analysis", analysis_results)
 
     def show_command_bar(self):
-        """Shows the AI command bar and sets focus to it."""
-        if self.command_bar_widget.isHidden():
-            self.command_bar_widget.show()
-            self.command_bar.setFocus() # Set focus to the input field
-        else:
-            self.command_bar_widget.hide()
+        self.show_ai_panel()
+        self.command_bar.setFocus()
 
 
     def update_recent_files_menu(self):
@@ -2383,6 +2429,7 @@ class MainWindow(QMainWindow):
 
     # --- AI Feature Placeholders ---
     def ai_summarize_page(self):
+        self.show_ai_panel()
         """Summarize the current markdown document using AI and show the result in a dialog with copy option."""
         if not self.ai:
             from config_utils import load_gemini_api_key
@@ -2418,6 +2465,7 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage("AI summarization complete.", 3000)
 
     def ai_autolink_page(self):
+        self.show_ai_panel()
         """Auto-link relevant terms in the current document to other notes using AI, with preview and copy option."""
         if not self.ai:
             from config_utils import load_gemini_api_key
@@ -2471,17 +2519,18 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage("AI auto-linking complete.", 3000)
 
     def ai_find_related_pages(self):
+        self.show_ai_panel()
         """Find and display the most related pages to the current document using AI embeddings."""
         if not self.ai:
             from config_utils import load_gemini_api_key
             api_key = load_gemini_api_key()
             if not api_key:
-                QMessageBox.warning(self, "API Key Missing", "Gemini API key not found. Please set it in Preferences.")
+                self.ai_results_label.setText("<b>AI Error:</b> Gemini API key not found. Please set it in Preferences.")
                 return
             self.ai = AIMarkdownAssistant(api_key)
         full_text = self.editor.toPlainText()
         if not full_text.strip():
-            QMessageBox.information(self, "AI Related Pages", "The document is empty.")
+            self.ai_results_label.setText("<b>AI Related Pages:</b><br>No content in the current document.")
             return
         # Gather all note titles and contents (excluding current file)
         from pathlib import Path
@@ -2495,38 +2544,36 @@ class MainWindow(QMainWindow):
                 except Exception:
                     continue
         if not all_notes:
-            QMessageBox.information(self, "AI Related Pages", "No other notes found.")
+            self.ai_results_label.setText("<b>AI Related Pages:</b><br>No other notes found.")
             return
+        self.ai_results_label.setText("<b>AI Related Pages:</b><br><i>Collecting results…</i>")
         self.statusBar().showMessage("AI is finding related pages...", 3000)
+        QApplication.processEvents()
         try:
             results = self.ai.find_related_pages(full_text, all_notes)
             if not results or results[0][0] == "[Error]":
-                QMessageBox.critical(self, "AI Related Pages Failed", "Could not find related pages.")
+                self.ai_results_label.setText("<b>AI Related Pages Failed:</b> Could not find related pages.")
                 return
-            # Show results in a dialog with clickable links
+            # Show results in the panel with clickable links
             msg = "<b>Top Related Pages:</b><br><ul>"
             for title, sim in results:
                 msg += f'<li><a href="wikilink://{title.replace(" ", "%20")}">{title}</a> (similarity: {sim:.2f})</li>'
             msg += "</ul>"
-            dlg = QMessageBox(self)
-            dlg.setWindowTitle("Related Pages")
-            dlg.setTextFormat(Qt.TextFormat.RichText)
-            dlg.setText(msg)
-            dlg.addButton(QMessageBox.StandardButton.Ok)
-            dlg.exec()
+            self.ai_results_label.setText(msg)
         except Exception as e:
             import traceback
             traceback.print_exc()
-            QMessageBox.critical(self, "AI Error", f"An unexpected error occurred: {e}")
+            self.ai_results_label.setText(f"<b>AI Error:</b> {e}")
         self.statusBar().showMessage("AI related pages complete.", 3000)
 
     def ai_semantic_search(self):
+        self.show_ai_panel()
         """Prompt for a search query, find the most semantically relevant notes, and show them."""
         if not self.ai:
             from config_utils import load_gemini_api_key
             api_key = load_gemini_api_key()
             if not api_key:
-                QMessageBox.warning(self, "API Key Missing", "Gemini API key not found. Please set it in Preferences.")
+                self.ai_results_label.setText("<b>AI Error:</b> Gemini API key not found. Please set it in Preferences.")
                 return
             self.ai = AIMarkdownAssistant(api_key)
         from PyQt6.QtWidgets import QInputDialog
@@ -2544,9 +2591,11 @@ class MainWindow(QMainWindow):
             except Exception:
                 continue
         if not all_notes:
-            QMessageBox.information(self, "Semantic Search", "No notes found.")
+            self.ai_results_label.setText("<b>Semantic Search:</b><br>No notes found.")
             return
+        self.ai_results_label.setText("<b>Semantic Search:</b><br><i>Collecting results…</i>")
         self.statusBar().showMessage("AI is searching semantically...", 3000)
+        QApplication.processEvents()
         try:
             query_emb = self.ai.get_embedding(query)
             results = []
@@ -2563,17 +2612,18 @@ class MainWindow(QMainWindow):
             for title, sim in top_results:
                 msg += f'<li><a href="wikilink://{title.replace(" ", "%20")}">{title}</a> (similarity: {sim:.2f})</li>'
             msg += "</ul>"
-            dlg = QMessageBox(self)
-            dlg.setWindowTitle("Semantic Search Results")
-            dlg.setTextFormat(Qt.TextFormat.RichText)
-            dlg.setText(msg)
-            dlg.addButton(QMessageBox.StandardButton.Ok)
-            dlg.exec()
+            self.ai_results_label.setText(msg)
         except Exception as e:
             import traceback
             traceback.print_exc()
-            QMessageBox.critical(self, "AI Error", f"An unexpected error occurred: {e}")
+            self.ai_results_label.setText(f"<b>AI Error:</b> {e}")
         self.statusBar().showMessage("AI semantic search complete.", 3000)
+
+    def _handle_ai_result_link(self, link):
+        # Handles clicks on AI result links (wikilink://...)
+        if link.startswith("wikilink://"):
+            page = link[len("wikilink://"):].replace("%20", " ")
+            self.handle_wiki_link(page)
 
 if __name__ == "__main__":
     # Standard PyQt application setup
