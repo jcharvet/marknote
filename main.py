@@ -808,6 +808,7 @@ class MainWindow(QMainWindow):
         
         self.tools_menu.addSeparator()
 
+        # --- AI Actions (flat, grouped) ---
         ai_command_action = QAction("AI Command", self)
         ai_command_action.setShortcut(QKeySequence("Ctrl+Shift+Space"))
         ai_command_action.triggered.connect(lambda: self.ai_prompt_action('command'))
@@ -820,7 +821,23 @@ class MainWindow(QMainWindow):
         ai_create_mermaid_action = QAction("AI Create Mermaid Diagram...", self)
         ai_create_mermaid_action.triggered.connect(self.ai_create_mermaid_diagram)
         self.tools_menu.addAction(ai_create_mermaid_action)
-        
+
+        ai_summary_action = QAction("Summarize Page", self)
+        ai_summary_action.triggered.connect(self.ai_summarize_page)
+        self.tools_menu.addAction(ai_summary_action)
+
+        ai_autolink_action = QAction("Auto-Link Page", self)
+        ai_autolink_action.triggered.connect(self.ai_autolink_page)
+        self.tools_menu.addAction(ai_autolink_action)
+
+        ai_related_action = QAction("Find Related Pages", self)
+        ai_related_action.triggered.connect(self.ai_find_related_pages)
+        self.tools_menu.addAction(ai_related_action)
+
+        ai_semantic_search_action = QAction("Semantic Search", self)
+        ai_semantic_search_action.triggered.connect(self.ai_semantic_search)
+        self.tools_menu.addAction(ai_semantic_search_action)
+
         self.tools_menu.addSeparator()
 
         toc_action = QAction("Generate Table of Contents", self)
@@ -1378,6 +1395,12 @@ class MainWindow(QMainWindow):
         refine_action = menu.addAction("Refine with AI")
         analyze_action = menu.addAction("Analyze Document with AI")
         menu.addSeparator()
+        # --- New AI Actions ---
+        ai_summary_action = menu.addAction("Summarize Page")
+        ai_autolink_action = menu.addAction("Auto-Link Page")
+        ai_related_action = menu.addAction("Find Related Pages")
+        ai_semantic_search_action = menu.addAction("Semantic Search")
+        menu.addSeparator()
         # Command Bar Actions
         command_bar_action = menu.addAction("Show AI Command Bar")
         # nlp_command_action = menu.addAction("AI Command (Natural Language)") # This seems redundant if command bar handles NLP
@@ -1386,6 +1409,10 @@ class MainWindow(QMainWindow):
         expand_action.triggered.connect(self.expand_selected_text)
         refine_action.triggered.connect(self.refine_selected_text)
         analyze_action.triggered.connect(self.analyze_document)
+        ai_summary_action.triggered.connect(self.ai_summarize_page)
+        ai_autolink_action.triggered.connect(self.ai_autolink_page)
+        ai_related_action.triggered.connect(self.ai_find_related_pages)
+        ai_semantic_search_action.triggered.connect(self.ai_semantic_search)
         command_bar_action.triggered.connect(self.show_command_bar)
         # nlp_command_action.triggered.connect(self.show_command_bar)
 
@@ -2353,6 +2380,101 @@ class MainWindow(QMainWindow):
                 with open(new_path, 'w', encoding='utf-8') as f:
                     f.write(f"# {page_name}\n\n")
                 self.open_file(str(new_path))
+
+    # --- AI Feature Placeholders ---
+    def ai_summarize_page(self):
+        """Summarize the current markdown document using AI and show the result in a dialog with copy option."""
+        if not self.ai:
+            from config_utils import load_gemini_api_key
+            api_key = load_gemini_api_key()
+            if not api_key:
+                QMessageBox.warning(self, "API Key Missing", "Gemini API key not found. Please set it in Preferences.")
+                return
+            self.ai = AIMarkdownAssistant(api_key)
+        full_text = self.editor.toPlainText()
+        if not full_text.strip():
+            QMessageBox.information(self, "AI Summarize", "The document is empty.")
+            return
+        self.statusBar().showMessage("AI is summarizing the page...", 3000)
+        try:
+            summary = self.ai.summarize_document(full_text)
+            if summary and not summary.startswith("Error:"):
+                # Custom dialog with copy button
+                msg_box = QMessageBox(self)
+                msg_box.setWindowTitle("Page Summary")
+                msg_box.setText(summary)
+                copy_btn = msg_box.addButton("Copy to Clipboard", QMessageBox.ButtonRole.ActionRole)
+                msg_box.addButton(QMessageBox.StandardButton.Ok)
+                msg_box.exec()
+                if msg_box.clickedButton() == copy_btn:
+                    QApplication.clipboard().setText(summary)
+                    self.statusBar().showMessage("Summary copied to clipboard.", 3000)
+            else:
+                QMessageBox.critical(self, "AI Summarize Failed", f"Could not generate summary. AI response:\n{summary}")
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            QMessageBox.critical(self, "AI Error", f"An unexpected error occurred: {e}")
+        self.statusBar().showMessage("AI summarization complete.", 3000)
+
+    def ai_autolink_page(self):
+        """Auto-link relevant terms in the current document to other notes using AI, with preview and copy option."""
+        if not self.ai:
+            from config_utils import load_gemini_api_key
+            api_key = load_gemini_api_key()
+            if not api_key:
+                QMessageBox.warning(self, "API Key Missing", "Gemini API key not found. Please set it in Preferences.")
+                return
+            self.ai = AIMarkdownAssistant(api_key)
+        full_text = self.editor.toPlainText()
+        if not full_text.strip():
+            QMessageBox.information(self, "AI Auto-Link", "The document is empty.")
+            return
+        # Gather all note titles (filenames without extension, excluding current file)
+        from pathlib import Path
+        base_path = Path(self.default_folder)
+        note_titles = []
+        for md_file in base_path.rglob('*.md'):
+            if str(md_file.resolve()) != str(self.current_file):
+                note_titles.append(md_file.stem)
+        print(f"[DEBUG] Note titles for auto-linking: {note_titles}")
+        if not note_titles:
+            QMessageBox.information(self, "AI Auto-Link", "No other notes found to link to.")
+            return
+        self.statusBar().showMessage("AI is auto-linking the page...", 3000)
+        try:
+            linked_markdown = self.ai.auto_link_document(full_text, note_titles)
+            if linked_markdown and not linked_markdown.startswith("Error:"):
+                # Preview dialog with accept/cancel/copy
+                msg_box = QMessageBox(self)
+                msg_box.setWindowTitle("Auto-Link Preview")
+                msg_box.setText("AI-suggested auto-linking complete. Review the changes below.\n\n" + linked_markdown[:2000] + ("..." if len(linked_markdown) > 2000 else ""))
+                accept_btn = msg_box.addButton("Accept Changes", QMessageBox.ButtonRole.AcceptRole)
+                copy_btn = msg_box.addButton("Copy to Clipboard", QMessageBox.ButtonRole.ActionRole)
+                cancel_btn = msg_box.addButton(QMessageBox.StandardButton.Cancel)
+                msg_box.exec()
+                if msg_box.clickedButton() == accept_btn:
+                    self.editor.setPlainText(linked_markdown)
+                    self.set_dirty(True)
+                    self.statusBar().showMessage("Auto-linking applied.", 3000)
+                elif msg_box.clickedButton() == copy_btn:
+                    QApplication.clipboard().setText(linked_markdown)
+                    self.statusBar().showMessage("Auto-linked markdown copied to clipboard.", 3000)
+                else:
+                    self.statusBar().showMessage("Auto-linking cancelled.", 3000)
+            else:
+                QMessageBox.critical(self, "AI Auto-Link Failed", f"Could not auto-link. AI response:\n{linked_markdown}")
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            QMessageBox.critical(self, "AI Error", f"An unexpected error occurred: {e}")
+        self.statusBar().showMessage("AI auto-linking complete.", 3000)
+
+    def ai_find_related_pages(self):
+        QMessageBox.information(self, "AI Related Pages", "[Stub] Related pages feature coming soon.")
+
+    def ai_semantic_search(self):
+        QMessageBox.information(self, "AI Semantic Search", "[Stub] Semantic search feature coming soon.")
 
 if __name__ == "__main__":
     # Standard PyQt application setup

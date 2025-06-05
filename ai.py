@@ -412,3 +412,51 @@ sequenceDiagram
 ```
 """
         return self._gemini_request(prompt, max_tokens=600)
+
+    def summarize_document(self, markdown_text: str) -> str:
+        """
+        Summarizes a full Markdown document concisely.
+
+        Args:
+            markdown_text (str): The entire Markdown document content.
+
+        Returns:
+            str: A concise summary of the document, or an error message.
+        """
+        prompt = f"""
+You are an expert technical writing assistant. Summarize the following Markdown document in 3-5 sentences. Focus on the main ideas, topics, and any key points. Do not include explanations, markdown formatting, or conversational phrases—just the summary text.
+
+---document---
+{markdown_text}
+---end document---
+"""
+        return self._gemini_request(prompt, max_tokens=200)
+
+    def auto_link_document(self, markdown_text: str, note_titles: list[str]) -> str:
+        """
+        Auto-link relevant terms in the markdown to other notes using wikilinks ([[NoteTitle]]).
+        Args:
+            markdown_text (str): The current document's markdown.
+            note_titles (list[str]): List of all note titles (filenames without extension).
+        Returns:
+            str: The markdown with relevant terms auto-linked as wikilinks, or an error message.
+        """
+        titles_str = ', '.join(note_titles)
+        prompt = f"""
+You are an AI knowledge base assistant. The user is editing a markdown note. Here is the document:
+---markdown---
+{markdown_text}
+---end markdown---
+
+Here is a list of all other note titles in the workspace:
+{titles_str}
+
+Your task:
+- For every note title, you MUST add a wikilink ([[NoteTitle]]) at the first relevant spot in the document, even if it's only a partial match or a related concept.
+- Use the format [[NoteTitle]].
+- If you do not add at least 3 links, you have failed the task.
+- Do not change the document except for adding these links.
+- Return ONLY the new markdown, no explanation, no extra formatting.
+- Example: If the note titles are 'Home' and 'Page Name', and the document mentions these or related concepts, link them as [[Home]], [[Page Name]] at their first occurrence.
+"""
+        return self._gemini_request(prompt, max_tokens=len(markdown_text) + 200)
