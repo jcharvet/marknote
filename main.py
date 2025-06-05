@@ -982,7 +982,6 @@ class MainWindow(QMainWindow):
         self.ai_results_panel.setLayout(ai_results_layout)
 
         # Close button
-        from PyQt6.QtWidgets import QHBoxLayout, QPushButton
         close_row = QHBoxLayout()
         close_row.setContentsMargins(0, 0, 0, 0)
         close_row.setSpacing(0)
