@@ -988,6 +988,7 @@ class MainWindow(QMainWindow):
 
         # AI Action Selector (QComboBox) at the top
         self.ai_action_selector = QComboBox()
+        self.ai_action_selector.addItem("Check Grammar & Style")
         self.ai_action_selector.addItems([
             "General Command",
             "Summarize Page",
@@ -1116,8 +1117,6 @@ class MainWindow(QMainWindow):
         self.ai = AIMarkdownAssistant()  # Initialize AI assistant
         self.editor.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.editor.customContextMenuRequested.connect(self.show_context_menu)
-
-        self.ai_action_selector.addItem("Check Grammar & Style")
 
     def _init_command_bar(self):
         """Initializes the AI command bar at the bottom of the window."""
