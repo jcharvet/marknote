@@ -849,6 +849,12 @@ class MainWindow(QMainWindow):
         syntax_action.triggered.connect(self.show_syntax_help)
         help_menu.addAction(syntax_action)
 
+        self.tools_menu.addSeparator()
+        # Add Grammar & Style action
+        ai_grammar_action = QAction("Check Grammar & Style", self)
+        ai_grammar_action.triggered.connect(self.ai_check_grammar_style)
+        self.tools_menu.addAction(ai_grammar_action)
+
     def init_ui(self):
         # Set dark palette
         palette = QPalette()
@@ -1110,6 +1116,8 @@ class MainWindow(QMainWindow):
         self.ai = AIMarkdownAssistant()  # Initialize AI assistant
         self.editor.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.editor.customContextMenuRequested.connect(self.show_context_menu)
+
+        self.ai_action_selector.addItem("Check Grammar & Style")
 
     def _init_command_bar(self):
         """Initializes the AI command bar at the bottom of the window."""
@@ -1454,46 +1462,14 @@ class MainWindow(QMainWindow):
             # If reply is No, proceed without saving (changes will be lost)
         return True
 
-    def show_context_menu(self, position: QPoint): # Added type hint
-        """
-        Shows a context menu in the editor with AI-related actions.
-
-        Args:
-            position (QPoint): The position where the context menu was requested.
-        """
-        menu = QMenu(self)
-        # AI Actions
-        expand_action = menu.addAction("Expand with AI")
-        refine_action = menu.addAction("Refine with AI")
-        analyze_action = menu.addAction("Analyze Document with AI")
+    def show_context_menu(self, pos):
+        menu = self.editor.createStandardContextMenu()
+        # Add Grammar & Style to context menu
         menu.addSeparator()
-        # --- New AI Actions ---
-        ai_summary_action = menu.addAction("Summarize Page")
-        ai_autolink_action = menu.addAction("Auto-Link Page")
-        ai_related_action = menu.addAction("Find Related Pages")
-        ai_semantic_search_action = menu.addAction("Semantic Search")
-        menu.addSeparator()
-        # Command Bar Actions
-        command_bar_action = menu.addAction("Show AI Command Bar")
-        # nlp_command_action = menu.addAction("AI Command (Natural Language)") # This seems redundant if command bar handles NLP
-
-        # Connect actions to methods
-        expand_action.triggered.connect(self.expand_selected_text)
-        refine_action.triggered.connect(self.refine_selected_text)
-        analyze_action.triggered.connect(self.analyze_document)
-        ai_summary_action.triggered.connect(self.ai_summarize_page)
-        ai_autolink_action.triggered.connect(self.ai_autolink_page)
-        ai_related_action.triggered.connect(self.ai_find_related_pages)
-        ai_semantic_search_action.triggered.connect(self.ai_semantic_search)
-        command_bar_action.triggered.connect(self.show_command_bar)
-        # nlp_command_action.triggered.connect(self.show_command_bar)
-
-        menu.addSeparator()
-        ai_analyze_table_action = menu.addAction("AI Analyze Table")
-        ai_analyze_table_action.setEnabled(self.editor.hasSelectedText())
-        ai_analyze_table_action.triggered.connect(self.ai_analyze_selected_table)
-        
-        menu.exec(self.editor.mapToGlobal(position)) # Show menu at global cursor position
+        grammar_action = QAction("Check Grammar & Style", self)
+        grammar_action.triggered.connect(self.ai_check_grammar_style)
+        menu.addAction(grammar_action)
+        menu.exec(self.editor.mapToGlobal(pos))
 
     def show_library_context_menu(self, position: QPoint): # Added type hint
         """
@@ -1668,15 +1644,12 @@ class MainWindow(QMainWindow):
     def execute_command(self):
         if not self._ensure_ai_assistant():
             return
-
         action_type = self.ai_action_selector.currentText()
         prompt = self.command_bar.toPlainText().strip()
         selected_text = self.editor.selectedText()
         full_text = self.editor.toPlainText()
-
         self.ai_results_display.setText(f"<i>Processing '{action_type}'...</i>")
         QApplication.processEvents()
-
         response_text = ""
         try:
             if action_type == "General Command":
@@ -1694,6 +1667,12 @@ class MainWindow(QMainWindow):
                     self.ai_results_display.setText("Please describe the table you want to create.")
                     return
                 response_text = self.ai.create_table(prompt)
+            elif action_type == "Check Grammar & Style":
+                text_to_check = selected_text or full_text
+                if not text_to_check.strip():
+                    self.ai_results_display.setText("Nothing to check. Please select text or enter content.")
+                    return
+                response_text = self.ai.check_grammar_style(text_to_check)
             elif action_type == "Auto-Link Page":
                 full_text = self.editor.toPlainText()
                 if not full_text.strip():
@@ -2674,6 +2653,12 @@ class MainWindow(QMainWindow):
                     self.execute_command()
                     return True
         return super().eventFilter(obj, event)
+
+    def ai_check_grammar_style(self):
+        self.show_ai_panel()
+        self.ai_action_selector.setCurrentText("Check Grammar & Style")
+        self.command_bar.setFocus()
+        # Optionally auto-run if desired, or let user click Send
 
 if __name__ == "__main__":
     # Standard PyQt application setup

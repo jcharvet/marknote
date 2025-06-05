@@ -510,3 +510,28 @@ Your task:
             return results[:5]  # Top 5 related
         except Exception as e:
             return [("[Error]", 0.0)]
+
+    def check_grammar_style(self, text_to_check: str) -> str:
+        """
+        Checks grammar and style of the provided text using Gemini, returning a Markdown list of issues and suggestions.
+
+        Args:
+            text_to_check (str): The text to analyze.
+
+        Returns:
+            str: Markdown-formatted list of grammar/style issues and suggestions, or an error message.
+        """
+        prompt = f"""
+You are an expert proofreader and style editor. Analyze the following text for grammar, clarity, conciseness, and style issues.
+
+---text---
+{text_to_check}
+---end text---
+
+Return ONLY a Markdown-formatted list of issues and suggestions. For each issue, briefly describe the problem and, if possible, provide a suggested rewrite inline. Do NOT include any preamble, summary, or conversational text—just the Markdown list.
+
+Example:
+- **Issue:** Sentence fragment. **Suggestion:** "This is a complete sentence."
+- **Issue:** Awkward phrasing. **Suggestion:** "Consider rewording to ..."
+"""
+        return self._gemini_request(prompt, max_tokens=400)
