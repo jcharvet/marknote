@@ -2710,19 +2710,11 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "AI Error", f"Failed to summarize: {e}")
             return
         self.statusBar().showMessage("")
-        # Show result in a dialog, offer to replace selection
-        result_dialog = QDialog(self)
-        result_dialog.setWindowTitle("AI Summary Result")
-        vbox = QVBoxLayout(result_dialog)
-        vbox.addWidget(QLabel("Summary:"))
-        result_edit = QTextEdit()
-        result_edit.setReadOnly(True)
-        result_edit.setPlainText(summary)
-        vbox.addWidget(result_edit)
-        btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok)
-        vbox.addWidget(btns)
-        btns.accepted.connect(result_dialog.accept)
-        result_dialog.exec()
+        # Show result in AI results panel
+        self.ai_results_display.setMarkdown(f"<b>Advanced Summary:</b>\n\n{summary}")
+        self._clear_ai_action_buttons()
+        self._add_ai_action_button("Copy Result", lambda: QApplication.clipboard().setText(summary))
+        self.show_ai_panel()
 
 if __name__ == "__main__":
     # Standard PyQt application setup
