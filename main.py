@@ -33,7 +33,7 @@ from PyQt6.QtGui import QAction, QKeySequence, QFont, QColor, QTextCharFormat, Q
 from PyQt6.QtWidgets import (
     QApplication, QFileDialog, QHBoxLayout, QVBoxLayout, QInputDialog, QLineEdit,
     QMainWindow, QMenu, QMessageBox, QPushButton, QStackedWidget, QTextEdit,
-    QToolBar, QTreeWidget, QTreeWidgetItem, QWidget, QDialog, QLabel, QDialogButtonBox, QListWidget, QComboBox, QTextBrowser
+    QToolBar, QTreeWidget, QTreeWidgetItem, QWidget, QDialog, QLabel, QDialogButtonBox, QListWidget, QComboBox, QTextBrowser, QCheckBox, QGridLayout
 )
 from PyQt6.Qsci import QsciLexerMarkdown, QsciScintilla
 from PyQt6.QtWebEngineWidgets import QWebEngineView # QWebEngineView already imported
@@ -636,6 +636,37 @@ class MainWindow(QMainWindow):
         else:
             self.set_view_mode(default_mode)
 
+        self.find_replace_bar = FindReplaceBar(self.editor, self)
+        self.find_replace_toolbar = QToolBar("Find/Replace", self)
+        self.find_replace_toolbar.setMovable(False)
+        self.find_replace_toolbar.addWidget(self.find_replace_bar)
+        self.addToolBar(Qt.ToolBarArea.TopToolBarArea, self.find_replace_toolbar)
+        self.find_replace_toolbar.hide()
+
+        # ... in MainWindow.__init__ after config is loaded ...
+        self._autosave_timer = QTimer(self)
+        self._autosave_timer.timeout.connect(self._handle_autosave)
+        self._autosave_enabled = config.get("autosave_enabled", True)
+        self._autosave_interval = config.get("autosave_interval", 60)
+        self._last_autosave_text = ""
+        self._setup_autosave_timer()
+
+    def _setup_autosave_timer(self):
+        if self._autosave_enabled:
+            self._autosave_timer.start(self._autosave_interval * 1000)
+        else:
+            self._autosave_timer.stop()
+    def _handle_autosave(self):
+        if not self._autosave_enabled:
+            return
+        if not getattr(self, "current_file", None):
+            return  # Don't autosave new/unsaved files
+        current_text = self.editor.toPlainText()
+        if current_text != self._last_autosave_text:
+            self.save_file()
+            self._last_autosave_text = current_text
+            self.statusBar().showMessage(f"Auto-saved at {datetime.datetime.now().strftime('%H:%M:%S')}", 2000)
+
     def set_view_mode(self, mode):
         if mode == 'edit':
             self.stack.setCurrentIndex(1)
@@ -846,6 +877,9 @@ class MainWindow(QMainWindow):
 
         # --- Help Menu ---
         help_menu = menubar.addMenu("Help")
+        shortcuts_action = QAction("Keyboard Shortcuts", self)
+        shortcuts_action.triggered.connect(self.show_shortcut_help)
+        help_menu.addAction(shortcuts_action)
         syntax_action = QAction("Markdown & Mermaid Syntax", self)
         syntax_action.triggered.connect(self.show_syntax_help)
         help_menu.addAction(syntax_action)
@@ -941,6 +975,9 @@ class MainWindow(QMainWindow):
         
         # --- Help Menu ---
         help_menu = menubar.addMenu("Help")
+        shortcuts_action = QAction("Keyboard Shortcuts", self)
+        shortcuts_action.triggered.connect(self.show_shortcut_help)
+        help_menu.addAction(shortcuts_action)
         syntax_action = QAction("Markdown & Mermaid Syntax", self)
         syntax_action.triggered.connect(self.show_syntax_help)
         help_menu.addAction(syntax_action)
@@ -966,6 +1003,16 @@ class MainWindow(QMainWindow):
         toc_action = QAction("Generate Table of Contents", self)
         toc_action.triggered.connect(self.insert_table_of_contents)
         tools_menu.addAction(toc_action)
+
+        edit_menu = menubar.addMenu("Edit")
+        find_action = QAction("Find", self)
+        find_action.setShortcut(QKeySequence("Ctrl+F"))
+        find_action.triggered.connect(self.show_find_replace)
+        edit_menu.addAction(find_action)
+        replace_action = QAction("Replace", self)
+        replace_action.setShortcut(QKeySequence("Ctrl+H"))
+        replace_action.triggered.connect(self.show_find_replace)
+        edit_menu.addAction(replace_action)
 
     def _setup_central_widget(self):
         central_widget = QWidget()
@@ -1326,6 +1373,7 @@ class MainWindow(QMainWindow):
             # If no current file, trigger "Save As" dialog
             self.save_file_as()
         self.update_preview()
+        self._last_autosave_text = self.editor.toPlainText()
 
     def save_file_as(self):
         """Saves the current editor content to a new file, chosen via a dialog."""
@@ -2054,6 +2102,10 @@ class MainWindow(QMainWindow):
             self.library_panel.setVisible(sidebar_visible)
             if hasattr(self, 'toggle_sidebar_action'):
                 self.toggle_sidebar_action.setChecked(sidebar_visible)
+            # Auto-save settings
+            self._autosave_enabled = config.get("autosave_enabled", True)
+            self._autosave_interval = config.get("autosave_interval", 60)
+            self._setup_autosave_timer()
         else:
             # Dialog was cancelled, or an error occurred during save in dialog
             pass # Optionally, log or inform user if specific feedback is needed
@@ -2715,6 +2767,110 @@ class MainWindow(QMainWindow):
         self._clear_ai_action_buttons()
         self._add_ai_action_button("Copy Result", lambda: QApplication.clipboard().setText(summary))
         self.show_ai_panel()
+
+    def show_find_replace(self):
+        self.find_replace_toolbar.show()
+        self.find_replace_bar.find_input.setFocus()
+    def hide_find_replace(self):
+        self.find_replace_toolbar.hide()
+
+    def show_shortcut_help(self):
+        shortcut_text = (
+            "<b>Keyboard Shortcuts:</b><br>"
+            "<ul>"
+            "<li><b>Find:</b> Ctrl+F</li>"
+            "<li><b>Replace:</b> Ctrl+H</li>"
+            "<li><b>Save:</b> Ctrl+S</li>"
+            "<li><b>Save As:</b> Ctrl+Shift+S</li>"
+            "<li><b>Print:</b> Ctrl+P</li>"
+            "<li><b>AI Command Bar:</b> Ctrl+Shift+Space</li>"
+            "<li><b>AI Command Bar Send:</b> Ctrl+Enter</li>"
+            "<li><b>Toggle Preview/Edit:</b> (Toolbar button or menu)</li>"
+            "</ul>"
+            "<i>More shortcuts may be available via context menus or toolbars.</i>"
+        )
+        QMessageBox.about(self, "Keyboard Shortcuts", shortcut_text)
+
+class FindReplaceBar(QWidget):
+    def __init__(self, editor, parent=None):
+        super().__init__(parent)
+        self.editor = editor
+        self.setStyleSheet("background: #23252b; color: #d7dae0; border-bottom: 1px solid #4b5263;")
+        layout = QGridLayout()
+        layout.setContentsMargins(4, 4, 4, 4)
+        layout.setSpacing(6)
+        self.find_input = QLineEdit()
+        self.find_input.setPlaceholderText("Find what")
+        self.replace_input = QLineEdit()
+        self.replace_input.setPlaceholderText("Replace with")
+        self.match_case = QCheckBox("Match case")
+        self.whole_word = QCheckBox("Whole word")
+        self.find_next_btn = QPushButton("Find Next")
+        self.find_prev_btn = QPushButton("Find Previous")
+        self.replace_btn = QPushButton("Replace")
+        self.replace_all_btn = QPushButton("Replace All")
+        layout.addWidget(self.find_input, 0, 0, 1, 2)
+        layout.addWidget(self.replace_input, 0, 2, 1, 2)
+        layout.addWidget(self.match_case, 1, 0)
+        layout.addWidget(self.whole_word, 1, 1)
+        layout.addWidget(self.find_next_btn, 1, 2)
+        layout.addWidget(self.find_prev_btn, 1, 3)
+        layout.addWidget(self.replace_btn, 2, 2)
+        layout.addWidget(self.replace_all_btn, 2, 3)
+        self.setLayout(layout)
+        self.find_next_btn.clicked.connect(self.find_next)
+        self.find_prev_btn.clicked.connect(self.find_prev)
+        self.replace_btn.clicked.connect(self.replace)
+        self.replace_all_btn.clicked.connect(self.replace_all)
+        self.find_input.returnPressed.connect(self.find_next)
+        self.replace_input.returnPressed.connect(self.replace)
+        self.hide()
+    def _get_flags(self):
+        flags = 0
+        if self.match_case.isChecked():
+            flags |= QsciScintilla.FindFlag.MatchCase
+        if self.whole_word.isChecked():
+            flags |= QsciScintilla.FindFlag.WholeWord
+        return flags
+    def find_next(self):
+        text = self.find_input.text()
+        if not text:
+            return
+        pos = self.editor.SendScintilla(QsciScintilla.SCI_GETCURRENTPOS)
+        found = self.editor.findFirst(text, self.match_case.isChecked(), False, self.whole_word.isChecked(), False, True, pos)
+        if not found:
+            self.parent().statusBar().showMessage("Not found", 2000)
+    def find_prev(self):
+        text = self.find_input.text()
+        if not text:
+            return
+        pos = self.editor.SendScintilla(QsciScintilla.SCI_GETCURRENTPOS)
+        found = self.editor.findFirst(text, self.match_case.isChecked(), False, self.whole_word.isChecked(), True, True, pos)
+        if not found:
+            self.parent().statusBar().showMessage("Not found", 2000)
+    def replace(self):
+        text = self.find_input.text()
+        replace_text = self.replace_input.text()
+        if not text:
+            return
+        if self.editor.hasSelectedText() and self.editor.selectedText() == text:
+            self.editor.replaceSelectedText(replace_text)
+            self.parent().set_dirty(True)
+        self.find_next()
+    def replace_all(self):
+        text = self.find_input.text()
+        replace_text = self.replace_input.text()
+        if not text:
+            return
+        flags = self._get_flags()
+        count = 0
+        self.editor.setCursorPosition(0, 0)
+        while self.editor.findFirst(text, self.match_case.isChecked(), False, self.whole_word.isChecked(), False, True):
+            if self.editor.hasSelectedText() and self.editor.selectedText() == text:
+                self.editor.replaceSelectedText(replace_text)
+                count += 1
+        self.parent().set_dirty(True)
+        self.parent().statusBar().showMessage(f"Replaced {count} occurrence(s)", 2000)
 
 if __name__ == "__main__":
     # Standard PyQt application setup
