@@ -2,5 +2,7 @@
   "GEMINI_API_KEY": "YOUR_API_KEY_HERE",
   "DEFAULT_NOTES_FOLDER": "",
   "EDITOR_FONT_FAMILY": "Arial",
-  "EDITOR_FONT_SIZE": 12
+  "EDITOR_FONT_SIZE": 12,
+  "autosave_enabled": true,
+  "autosave_interval": 60
 }

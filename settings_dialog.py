@@ -71,6 +71,18 @@ class SettingsDialog(QDialog):
         self.sidebar_visible_checkbox = QCheckBox("Show sidebar by default")
         form_layout.addRow(QLabel(""), self.sidebar_visible_checkbox)
 
+        # Auto-Save
+        self.autosave_checkbox = QCheckBox("Enable Auto-Save")
+        self.autosave_interval_spinbox = QSpinBox()
+        self.autosave_interval_spinbox.setMinimum(5)
+        self.autosave_interval_spinbox.setMaximum(3600)
+        self.autosave_interval_spinbox.setSuffix(" s")
+        autosave_layout = QHBoxLayout()
+        autosave_layout.addWidget(self.autosave_checkbox)
+        autosave_layout.addWidget(QLabel("Interval:"))
+        autosave_layout.addWidget(self.autosave_interval_spinbox)
+        form_layout.addRow(QLabel("Auto-Save:"), autosave_layout)
+
         layout.addLayout(form_layout)
 
         # Dialog buttons (OK, Cancel)
@@ -101,6 +113,10 @@ class SettingsDialog(QDialog):
         self.remember_last_mode_checkbox.setChecked(self.config.get(REMEMBER_LAST_MODE_KEY, True))
         self.sidebar_visible_checkbox.setChecked(self.config.get(CONFIG_KEY_SIDEBAR_VISIBLE, True))
 
+        # Auto-Save
+        self.autosave_checkbox.setChecked(self.config.get("autosave_enabled", True))
+        self.autosave_interval_spinbox.setValue(self.config.get("autosave_interval", 60))
+
     def _save_settings(self) -> bool:
         """Saves the current UI settings to the configuration file."""
         self.config[CONFIG_KEY_GEMINI_API_KEY] = self.api_key_edit.text().strip()
@@ -111,6 +127,10 @@ class SettingsDialog(QDialog):
         self.config[DEFAULT_VIEW_MODE_KEY] = "edit" if self.radio_edit.isChecked() else "preview"
         self.config[REMEMBER_LAST_MODE_KEY] = self.remember_last_mode_checkbox.isChecked()
         self.config[CONFIG_KEY_SIDEBAR_VISIBLE] = self.sidebar_visible_checkbox.isChecked()
+
+        # Auto-Save
+        self.config["autosave_enabled"] = self.autosave_checkbox.isChecked()
+        self.config["autosave_interval"] = self.autosave_interval_spinbox.value()
 
         if save_app_config(self.config):
             return True
