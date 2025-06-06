@@ -535,3 +535,45 @@ Example:
 - **Issue:** Awkward phrasing. **Suggestion:** "Consider rewording to ..."
 """
         return self._gemini_request(prompt, max_tokens=400)
+
+    def advanced_summarize(
+        self,
+        text_to_summarize: str,
+        length_preference: str = "medium",
+        style: str = "paragraph",
+        keywords: Optional[list[str]] = None
+    ) -> str:
+        """
+        Generate an advanced summary of the provided text with user-configurable options.
+
+        Args:
+            text_to_summarize (str): The text to summarize.
+            length_preference (str): 'short', 'medium', 'long', or a numeric string for sentence count.
+            style (str): 'paragraph' or 'bullet_points'.
+            keywords (Optional[list[str]]): List of keywords to focus on (optional).
+
+        Returns:
+            str: The generated summary or an error message.
+        """
+        keywords_str = ", ".join(keywords) if keywords else None
+        prompt = f"""
+You are an expert Markdown summarization assistant.
+Summarize the following text according to the user's preferences:
+
+---text---
+{text_to_summarize}
+---end text---
+
+Summary requirements:
+- Length: {length_preference} (if a number, aim for that many sentences)
+- Style: {style}
+- Focus: {keywords_str if keywords_str else 'No specific focus'}
+
+Instructions:
+- If style is 'paragraph', write a coherent narrative summary.
+- If style is 'bullet_points', provide concise bullet points (use Markdown '- ' for each point).
+- If keywords are provided, prioritize information related to them.
+- Be clear and concise. Do not include any preamble or explanation.
+"""
+        max_tokens = 120 if length_preference == "short" else 300 if length_preference == "medium" else 500
+        return self._gemini_request(prompt, max_tokens=max_tokens)

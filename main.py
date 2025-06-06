@@ -49,6 +49,7 @@ from markdown.extensions.toc import TocExtension
 from toc_utils import generate_anchor
 import requests
 from toc_utils import extract_headings, format_toc
+from ai_prompt_dialog import AdvancedSummarizationDialog
 
 DEFAULT_VIEW_MODE_KEY = "default_view_mode"
 REMEMBER_LAST_MODE_KEY = "remember_last_view_mode"
@@ -854,6 +855,11 @@ class MainWindow(QMainWindow):
         ai_grammar_action = QAction("Check Grammar & Style", self)
         ai_grammar_action.triggered.connect(self.ai_check_grammar_style)
         self.tools_menu.addAction(ai_grammar_action)
+
+        # Advanced Summarization
+        self.adv_summarization_action = QAction("Advanced Summarization...", self)
+        self.adv_summarization_action.triggered.connect(self.show_advanced_summarization_dialog)
+        self.tools_menu.addAction(self.adv_summarization_action)
 
     def init_ui(self):
         # Set dark palette
@@ -2658,6 +2664,57 @@ class MainWindow(QMainWindow):
         self.ai_action_selector.setCurrentText("Check Grammar & Style")
         self.command_bar.setFocus()
         # Optionally auto-run if desired, or let user click Send
+
+    def show_advanced_summarization_dialog(self):
+        has_selection = False
+        try:
+            editor = self.editor if hasattr(self, 'editor') else None
+            if editor:
+                cursor = editor.textCursor()
+                has_selection = cursor.hasSelection() and len(cursor.selectedText().strip()) > 0
+        except Exception:
+            pass
+        dialog = AdvancedSummarizationDialog(has_selection, self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            opts = dialog.get_options()
+            self.trigger_advanced_summarization(opts)
+
+    def trigger_advanced_summarization(self, opts):
+        # Get text to summarize
+        editor = self.editor if hasattr(self, 'editor') else None
+        if not editor:
+            QMessageBox.warning(self, "Error", "Editor not available.")
+            return
+        if opts["target"] == "selection":
+            cursor = editor.textCursor()
+            text = cursor.selectedText().strip()
+            if not text:
+                QMessageBox.warning(self, "No Selection", "No text selected for summarization.")
+                return
+        else:
+            text = editor.toPlainText().strip()
+            if not text:
+                QMessageBox.warning(self, "Empty Document", "Document is empty.")
+                return
+        # Call AI
+        self.statusBar().showMessage("Summarizing with AI...")
+        try:
+            summary = self.ai.advanced_summarize(
+                text_to_summarize=text,
+                length_preference=opts["length"],
+                style=opts["style"],
+                keywords=opts["keywords"] if opts["keywords"] else None
+            )
+        except Exception as e:
+            self.statusBar().showMessage("")
+            QMessageBox.critical(self, "AI Error", f"Failed to summarize: {e}")
+            return
+        self.statusBar().showMessage("")
+        # Show result in AI results panel
+        self.ai_results_display.setMarkdown(f"<b>Advanced Summary:</b>\n\n{summary}")
+        self._clear_ai_action_buttons()
+        self._add_ai_action_button("Copy Result", lambda: QApplication.clipboard().setText(summary))
+        self.show_ai_panel()
 
 if __name__ == "__main__":
     # Standard PyQt application setup
